@@ -11,9 +11,12 @@ from app.services.qdrant_service import search_chunks
 
 logger = logging.getLogger(__name__)
 
-RAG_SYSTEM_PROMPT = """Tu es un assistant qui répond aux questions à partir des documents fournis. Si la réponse n'est pas dans le contexte, dis "Information non trouvée dans les documents fournis."
+RAG_SYSTEM_PROMPT = """Tu es un assistant intelligent. Tu as accès à des documents fournis dans le contexte.
 
-Sois précis et concis."""
+Règles :
+1. Si la réponse est dans les documents fournis, réponds en te basant sur eux et cite les sources.
+2. Si la réponse n'est pas dans les documents mais que tu la connais, réponds normalement en précisant que l'information vient de tes connaissances générales et non des documents.
+3. Sois précis et concis."""
 
 
 def _sse(data: dict) -> str:
