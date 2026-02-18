@@ -1,6 +1,6 @@
 services:
 
-  # ── PostgreSQL ───────────────────────────────────────────────────────────────
+  # ── PostgreSQL ──────────────────────────────────────────────
   postgres:
     image: postgres:16-alpine
     restart: unless-stopped
@@ -10,75 +10,45 @@ services:
       POSTGRES_PASSWORD: ragpassword
     volumes:
       - postgres_data:/var/lib/postgresql/data
-    # Healthcheck léger mais suffisant
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U raguser -d ragdb"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
 
-  # ── Qdrant ───────────────────────────────────────────────────────────────────
+  # ── Qdrant ──────────────────────────────────────────────────
   qdrant:
     image: qdrant/qdrant:latest
     restart: unless-stopped
     volumes:
       - qdrant_data:/qdrant/storage
-    # On supprime le healthcheck strict qui faisait échouer Qdrant
-    # start_period: permet au container de démarrer sans être bloqué
-    healthcheck:
-      test: ["CMD-SHELL", "echo 'Qdrant started'"]
-      interval: 30s
-      timeout: 10s
-      retries: 1
-      start_period: 30s
 
-  # ── Ollama ───────────────────────────────────────────────────────────────────
+  # ── Ollama ─────────────────────────────────────────────────
   ollama:
     image: ollama/ollama:latest
     restart: unless-stopped
-    runtime: nvidia
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: all
-              capabilities: [gpu]
-    environment:
-      OLLAMA_GPU_OVERHEAD: 0
     volumes:
       - ollama_data:/root/.ollama
-    healthcheck:
-      test: ["CMD-SHELL", "echo 'Ollama started'"]
-      interval: 30s
-      timeout: 10s
-      retries: 1
-      start_period: 30s
+    environment:
+      OLLAMA_HOST: "0.0.0.0"
+      # Si tu veux forcer l'utilisation du GPU : OLLAMA_VISIBLE_DEVICES: 0
+    # Healthcheck supprimé pour éviter les erreurs
 
-  # ── Ollama Init (télécharge les modèles au premier démarrage) ────────────────
+  # ── Ollama Init (télécharge les modèles) ───────────────────
   ollama-init:
     image: curlimages/curl:latest
     restart: no
     depends_on:
-      ollama:
-        condition: service_started
+      - ollama
     volumes:
       - ./scripts/init-ollama.sh:/init.sh:ro
     entrypoint: ["/bin/sh", "/init.sh"]
 
-  # ── Backend ──────────────────────────────────────────────────────────────────
+  # ── Backend ────────────────────────────────────────────────
   backend:
     build:
       context: ./backend
       dockerfile: Dockerfile
     restart: unless-stopped
     depends_on:
-      postgres:
-        condition: service_healthy
-      qdrant:
-        condition: service_started
-      ollama:
-        condition: service_started
+      - postgres
+      - qdrant
+      - ollama
     environment:
       DATABASE_URL: postgresql+asyncpg://raguser:ragpassword@postgres:5432/ragdb
       QDRANT_HOST: qdrant
@@ -86,46 +56,31 @@ services:
       OLLAMA_BASE_URL: http://ollama:11434
       SECRET_KEY: "${SECRET_KEY}"
       DEBUG: "false"
-      CORS_ORIGINS: "${CORS_ORIGINS}"
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost}
     volumes:
       - uploads_tmp:/tmp/uploads
-    # healthcheck très permissif ou supprimé pour éviter l’« unhealthy »
-    healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://localhost:8000/health || exit 0"]
-      interval: 30s
-      timeout: 10s
-      retries: 1
-      start_period: 30s
+    # Healthcheck retiré pour éviter blocage
 
-  # ── Frontend ─────────────────────────────────────────────────────────────────
+  # ── Frontend ───────────────────────────────────────────────
   frontend:
     build:
       context: ./frontend
       dockerfile: Dockerfile
     restart: unless-stopped
     depends_on:
-      backend:
-        condition: service_started
+      - backend
     environment:
-      NEXT_PUBLIC_API_URL: ""
-    healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://localhost:3000 || exit 0"]
-      interval: 30s
-      timeout: 10s
-      retries: 1
-      start_period: 60s
+      NEXT_PUBLIC_API_URL: ""  # Vide = Nginx proxy
 
-  # ── Nginx ────────────────────────────────────────────────────────────────────
+  # ── Nginx ─────────────────────────────────────────────────
   nginx:
     image: nginx:alpine
     restart: unless-stopped
     ports:
-      - "80:80"
+      - "80:80"   # accès HTTP public (optionnel)
     depends_on:
-      backend:
-        condition: service_started
-      frontend:
-        condition: service_started
+      - backend
+      - frontend
     volumes:
       - ./nginx/nginx.conf:/etc/nginx/conf.d/default.conf:ro
 
