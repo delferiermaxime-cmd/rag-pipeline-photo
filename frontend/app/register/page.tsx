@@ -15,6 +15,21 @@ export default function RegisterPage() {
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     setError('')
+
+    // Validation côté client
+    if (!email || !email.includes('@')) {
+      setError("Adresse email invalide.")
+      return
+    }
+    if (username.length < 3) {
+      setError("Le nom d'utilisateur doit faire au moins 3 caractères.")
+      return
+    }
+    if (password.length < 8) {
+      setError("Le mot de passe doit faire au moins 8 caractères.")
+      return
+    }
+
     setLoading(true)
     try {
       await register(email, username, password)
@@ -36,11 +51,11 @@ export default function RegisterPage() {
           <div className={styles.field}>
             <label>Email</label>
             <input
-              type="email"
+              type="text"
               value={email}
               onChange={e => setEmail(e.target.value)}
               placeholder="you@example.com"
-              required
+              autoComplete="email"
             />
           </div>
           <div className={styles.field}>
@@ -50,8 +65,7 @@ export default function RegisterPage() {
               value={username}
               onChange={e => setUsername(e.target.value)}
               placeholder="username"
-              required
-              minLength={3}
+              autoComplete="username"
             />
           </div>
           <div className={styles.field}>
@@ -61,8 +75,7 @@ export default function RegisterPage() {
               value={password}
               onChange={e => setPassword(e.target.value)}
               placeholder="••••••••"
-              required
-              minLength={8}
+              autoComplete="new-password"
             />
           </div>
           {error && <p className={styles.error}>{error}</p>}
