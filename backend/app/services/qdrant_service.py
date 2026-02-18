@@ -14,6 +14,7 @@ from app.config import settings
 logger = logging.getLogger(__name__)
 
 _client: Optional[AsyncQdrantClient] = None
+_collection_ready: bool = False  # FIX : flag pour éviter un appel réseau à chaque upload
 
 
 def get_client() -> AsyncQdrantClient:
@@ -24,6 +25,12 @@ def get_client() -> AsyncQdrantClient:
 
 
 async def ensure_collection(dim: int = None) -> None:
+    global _collection_ready
+
+    # FIX : si la collection a déjà été vérifiée dans cette session, on ne refait pas l'appel réseau
+    if _collection_ready:
+        return
+
     client = get_client()
     dim = dim or settings.EMBEDDING_DIM
     collections = await client.get_collections()
@@ -34,6 +41,10 @@ async def ensure_collection(dim: int = None) -> None:
             vectors_config=VectorParams(size=dim, distance=Distance.COSINE),
         )
         logger.info(f"Collection '{settings.QDRANT_COLLECTION}' créée (dim={dim})")
+    else:
+        logger.info(f"Collection '{settings.QDRANT_COLLECTION}' déjà existante (dim={dim})")
+
+    _collection_ready = True
 
 
 async def upsert_chunks(
@@ -45,7 +56,7 @@ async def upsert_chunks(
     client = get_client()
     points = [
         PointStruct(
-            id=str(uuid.uuid4()),  # FIX : uuid4 — pas hash() qui peut collisionner
+            id=str(uuid.uuid4()),
             vector=embedding,
             payload={
                 "user_id": user_id,
