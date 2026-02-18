@@ -38,13 +38,11 @@ services:
       - ollama_data:/root/.ollama
     # GPU NVIDIA activé par défaut.
     # Sans GPU : supprimez le bloc "deploy" ci-dessous.
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: all
-              capabilities: [gpu]
+    #reservations:
+          #devices:
+            #- driver: nvidia
+             # count: all
+              #capabilities: [gpu]
     healthcheck:
       test: ["CMD-SHELL", "curl -sf http://localhost:11434/api/tags || exit 1"]
       interval: 15s
