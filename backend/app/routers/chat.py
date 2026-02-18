@@ -78,6 +78,8 @@ async def chat_stream(
             temperature=message.temperature,
             top_k=message.top_k,
             max_tokens=message.max_tokens,
+            min_score=message.min_score,
+            context_max_chars=message.context_max_chars,
         ):
             try:
                 data = json.loads(chunk.removeprefix("data: ").strip())
