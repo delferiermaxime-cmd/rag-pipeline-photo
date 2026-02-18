@@ -37,6 +37,9 @@ services:
     restart: unless-stopped
     volumes:
       - ollama_data:/root/.ollama
+    environment:
+      OLLAMA_VULKAN: 1        # active le support Vulkan (GPU)
+    runtime: nvidia           # obligatoire si GPU NVIDIA
     healthcheck:
       test: ["CMD-SHELL", "curl -sf http://localhost:11434/api/tags || exit 1"]
       interval: 15s
