@@ -39,7 +39,7 @@ async def stream_rag_response(
     try:
         query_embedding = await get_embedding(question, http_client)
     except Exception as e:
-        yield f"data: {json.dumps({'type': 'error', 'error': f'Erreur embedding: {e}'})}\\n\\n"
+        yield f"data: {json.dumps({'type': 'error', 'error': f'Erreur embedding: {e}'})}\n\n"
         return
 
     # 2. Recherche Qdrant
@@ -51,7 +51,7 @@ async def stream_rag_response(
             document_ids=document_ids,
         )
     except Exception as e:
-        yield f"data: {json.dumps({'type': 'error', 'error': f'Erreur recherche: {e}'})}\\n\\n"
+        yield f"data: {json.dumps({'type': 'error', 'error': f'Erreur recherche: {e}'})}\n\n"
         return
 
     # 3. Envoi des sources au frontend
@@ -65,11 +65,11 @@ async def stream_rag_response(
         }
         for c in chunks
     ]
-    yield f"data: {json.dumps({'type': 'sources', 'sources': sources})}\\n\\n"
+    yield f"data: {json.dumps({'type': 'sources', 'sources': sources})}\n\n"
 
     if not chunks:
-        yield f"data: {json.dumps({'type': 'token', 'token': 'Information non trouvée dans les documents fournis.'})}\\n\\n"
-        yield f"data: {json.dumps({'type': 'done'})}\\n\\n"
+        yield f"data: {json.dumps({'type': 'token', 'token': 'Information non trouvée dans les documents fournis.'})}\n\n"
+        yield f"data: {json.dumps({'type': 'done'})}\n\n"
         return
 
     # 4. Stream LLM — timeout read=None car la réponse peut être longue
@@ -98,18 +98,18 @@ async def stream_rag_response(
                 try:
                     data = json.loads(line)
                     if data.get("done"):
-                        yield f"data: {json.dumps({'type': 'done'})}\\n\\n"
+                        yield f"data: {json.dumps({'type': 'done'})}\n\n"
                         break
                     token = data.get("message", {}).get("content", "")
                     if token:
-                        yield f"data: {json.dumps({'type': 'token', 'token': token})}\\n\\n"
+                        yield f"data: {json.dumps({'type': 'token', 'token': token})}\n\n"
                 except json.JSONDecodeError:
                     continue
     except httpx.TimeoutException:
-        yield f"data: {json.dumps({'type': 'error', 'error': f'Timeout: le modèle {model} met trop de temps à répondre'})}\\n\\n"
+        yield f"data: {json.dumps({'type': 'error', 'error': f'Timeout: le modèle {model} met trop de temps à répondre'})}\n\n"
     except Exception as e:
         logger.error(f"Erreur streaming LLM: {e}")
-        yield f"data: {json.dumps({'type': 'error', 'error': str(e)})}\\n\\n"
+        yield f"data: {json.dumps({'type': 'error', 'error': str(e)})}\n\n"
 
 
 async def list_available_models(http_client: httpx.AsyncClient) -> List[str]:
