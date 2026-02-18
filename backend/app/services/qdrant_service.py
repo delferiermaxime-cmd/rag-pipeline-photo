@@ -78,6 +78,7 @@ async def search_chunks(
     user_id: str = None,
     top_k: int = 5,
     document_ids: Optional[List[str]] = None,
+    min_score: float = 0.0,
 ) -> List[Dict[str, Any]]:
     client = get_client()
     query_filter = None
@@ -91,6 +92,7 @@ async def search_chunks(
         query_vector=query_embedding,
         query_filter=query_filter,
         limit=top_k,
+        score_threshold=min_score if min_score > 0 else None,
         with_payload=True,
     )
     return [
