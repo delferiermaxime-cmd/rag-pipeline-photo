@@ -102,7 +102,7 @@ export function streamChat(
   onError: (err: string) => void,
   onConversationId: (id: string) => void,
   conversationId?: string,
-  settings?: { temperature?: number; topK?: number; maxTokens?: number },
+  settings?: { temperature?: number; topK?: number; maxTokens?: number; minScore?: number; contextMaxChars?: number },
 ): () => void {
   const token = getToken()
   const controller = new AbortController()
@@ -117,6 +117,8 @@ export function streamChat(
       temperature: settings?.temperature,
       top_k: settings?.topK,
       max_tokens: settings?.maxTokens,
+      min_score: settings?.minScore,
+      context_max_chars: settings?.contextMaxChars,
     }),
     signal: controller.signal,
   }).then(async (res) => {
