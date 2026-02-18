@@ -42,7 +42,8 @@ async def lifespan(app: FastAPI):
     # Retry avec backoff exponentiel pour Qdrant/Ollama (peuvent démarrer après le backend)
     for attempt in range(1, 6):
         try:
-            dim = await verify_embedding_model()
+            # FIX : on passe le client partagé — pas besoin d'en créer un nouveau
+            dim = await verify_embedding_model(app.state.http_client)
             await ensure_collection(dim)
             logger.info(f"Qdrant prêt (dim={dim})")
             break
@@ -56,13 +57,14 @@ async def lifespan(app: FastAPI):
 
     yield
 
+    # Fermeture propre du client HTTP à l'arrêt du serveur
     await app.state.http_client.aclose()
     logger.info("Arrêt propre.")
 
 
 app = FastAPI(title=settings.APP_NAME, version="1.0.0", lifespan=lifespan)
 
-# CORS depuis settings — configurable via .env (tunnel SSH : ajouter localhost:8080)
+# CORS depuis settings — configurable via .env
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.CORS_ORIGINS,
