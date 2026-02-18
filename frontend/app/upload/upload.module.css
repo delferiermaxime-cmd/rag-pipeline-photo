@@ -7,7 +7,7 @@
   flex: 1;
   padding: 40px;
   overflow-y: auto;
-  max-width: 700px;
+  max-width: 800px;
 }
 
 .header {
@@ -37,21 +37,32 @@
   align-items: center;
   gap: 12px;
   color: var(--text-muted);
-  margin-bottom: 24px;
+  margin-bottom: 32px;
 }
 
-.dropzone:hover, .dropzone.dragging {
+.dropzone:hover, .dragging {
   border-color: var(--accent-dim);
   background: var(--bg-2);
 }
 
-.dropzone p {
-  font-size: 15px;
-}
+.dropzone p { font-size: 15px; }
 
 .browse {
   color: var(--accent);
   text-decoration: underline;
+}
+
+.section {
+  margin-bottom: 32px;
+}
+
+.sectionTitle {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-muted);
+  margin-bottom: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
 }
 
 .uploadList {
@@ -70,10 +81,7 @@
   padding: 12px 16px;
 }
 
-.fileIcon {
-  color: var(--text-muted);
-  flex-shrink: 0;
-}
+.fileIcon { color: var(--text-muted); flex-shrink: 0; }
 
 .fileInfo {
   flex: 1;
@@ -92,9 +100,28 @@
   display: block;
   font-size: 11px;
   color: var(--text-muted);
-  margin-top: 2px;
+  margin-top: 4px;
 }
 
-.fileStatus {
-  flex-shrink: 0;
+.progressBar {
+  height: 4px;
+  background: var(--bg-3);
+  border-radius: 2px;
+  margin-top: 6px;
+  overflow: hidden;
+}
+
+.progressFill {
+  height: 100%;
+  background: var(--accent);
+  border-radius: 2px;
+  transition: width 0.3s ease;
+}
+
+.fileStatus { flex-shrink: 0; }
+
+.emptyDocs {
+  color: var(--text-muted);
+  font-size: 13px;
+  padding: 20px 0;
 }
