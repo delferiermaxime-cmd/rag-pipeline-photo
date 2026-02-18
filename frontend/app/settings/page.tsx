@@ -10,7 +10,14 @@ const DEFAULTS = {
   temperature: 0.1,
   topK: 5,
   maxTokens: 1024,
-  systemPrompt: `Tu es un assistant qui répond aux questions à partir des documents fournis. Si la réponse n'est pas dans le contexte, dis "Information non trouvée dans les documents fournis."\n\nSois précis et concis.`,
+  minScore: 0.3,
+  contextMaxChars: 12000,
+  systemPrompt: `Tu es un assistant intelligent. Tu as accès à des documents fournis dans le contexte.
+
+Règles :
+1. Si la réponse est dans les documents fournis, réponds en te basant sur eux et cite les sources.
+2. Si la réponse n'est pas dans les documents mais que tu la connais, réponds normalement en précisant que l'information vient de tes connaissances générales et non des documents.
+3. Sois précis et concis.`,
 }
 
 export default function SettingsPage() {
@@ -86,6 +93,23 @@ export default function SettingsPage() {
               <input type="range" min={1} max={20} step={1} value={s.topK} className={styles.range}
                 onChange={e => setS(prev => ({ ...prev, topK: parseInt(e.target.value) }))} />
               <div className={styles.rangeLabels}><span>1</span><span>20</span></div>
+            </div>
+          </div>
+
+            <div className={styles.field}>
+              <label className={styles.label}>Score de similarité minimum <span className={styles.value}>{s.minScore}</span></label>
+              <p className={styles.fieldDesc}>Seuil en dessous duquel les chunks sont ignorés (0 = tout accepter · 1 = exact uniquement)</p>
+              <input type="range" min={0} max={1} step={0.05} value={s.minScore} className={styles.range}
+                onChange={e => setS(prev => ({ ...prev, minScore: parseFloat(e.target.value) }))} />
+              <div className={styles.rangeLabels}><span>0</span><span>1</span></div>
+            </div>
+
+            <div className={styles.field}>
+              <label className={styles.label}>Contexte max (caractères) <span className={styles.value}>{s.contextMaxChars.toLocaleString()}</span></label>
+              <p className={styles.fieldDesc}>Taille maximale du contexte envoyé au LLM — réduit si le modèle a une fenêtre courte</p>
+              <input type="range" min={2000} max={32000} step={1000} value={s.contextMaxChars} className={styles.range}
+                onChange={e => setS(prev => ({ ...prev, contextMaxChars: parseInt(e.target.value) }))} />
+              <div className={styles.rangeLabels}><span>2k</span><span>32k</span></div>
             </div>
           </div>
 
