@@ -3,7 +3,7 @@ import logging
 from pathlib import Path
 from uuid import UUID, uuid4
 
-from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Request, UploadFile
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -21,12 +21,13 @@ logger = logging.getLogger(__name__)
 
 @router.post("/upload", response_model=DocumentOut, status_code=202)
 async def upload_document(
+    request: Request,                          # FIX : ajout de Request pour accéder au client HTTP
     background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    # Validation extension (sans point, comme dans ALLOWED_EXTENSIONS)
+    # Validation extension
     suffix = Path(file.filename).suffix.lower()
     suffix_clean = suffix.lstrip(".")
     if suffix_clean not in settings.ALLOWED_EXTENSIONS:
@@ -54,7 +55,9 @@ async def upload_document(
     db.add(doc)
     await db.flush()
     await db.refresh(doc)
-    # commit géré par get_db
+
+    # FIX : on récupère le client partagé et on le passe à la tâche de fond
+    http_client = request.app.state.http_client
 
     background_tasks.add_task(
         _process_document,
@@ -62,15 +65,20 @@ async def upload_document(
         filename=file.filename,
         document_id=str(doc.id),
         user_id=str(current_user.id),
+        http_client=http_client,
     )
     return doc
 
 
-async def _process_document(file_bytes: bytes, filename: str, document_id: str, user_id: str) -> None:
+async def _process_document(
+    file_bytes: bytes,
+    filename: str,
+    document_id: str,
+    user_id: str,
+    http_client=None,          # FIX : client partagé injecté depuis la route
+) -> None:
     """
     Tâche de fond : Docling → chunks → embeddings → Qdrant → mise à jour DB.
-    FIX : docling_service.convert_document retourne déjà les chunks, pas un str brut.
-    FIX : db.get(Document, UUID(document_id)) — UUID requis, pas str.
     """
     async with AsyncSessionLocal() as db:
         try:
@@ -81,7 +89,8 @@ async def _process_document(file_bytes: bytes, filename: str, document_id: str, 
 
             logger.info(f"[{document_id}] Embedding de {len(chunks)} chunks")
             texts = [c["content"] for c in chunks]
-            embeddings = await get_embeddings(texts)
+            # FIX : passe le client partagé pour éviter de créer un client temporaire
+            embeddings = await get_embeddings(texts, http_client)
 
             await ensure_collection(len(embeddings[0]))
             count = await upsert_chunks(chunks, embeddings, user_id, document_id)
