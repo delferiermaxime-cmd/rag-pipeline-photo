@@ -3,7 +3,7 @@ from datetime import datetime
 from typing import List, Optional
 from uuid import UUID
 
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, EmailStr, Field, field_validator
 
 
 # ── Auth ──────────────────────────────────────────────────────────────────────
@@ -11,6 +11,13 @@ class UserRegister(BaseModel):
     email: EmailStr
     username: str = Field(..., min_length=3, max_length=100)
     password: str = Field(..., min_length=8)
+
+    @field_validator('username')
+    @classmethod
+    def username_valid(cls, v):
+        if not v.replace('_', '').replace('-', '').isalnum():
+            raise ValueError("Le nom d'utilisateur ne peut contenir que des lettres, chiffres, _ et -")
+        return v
 
 
 class UserLogin(BaseModel):
