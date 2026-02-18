@@ -34,11 +34,8 @@ if _DOCLING_OK:
         ".odt":      InputFormat.DOCX,
         ".html":     InputFormat.HTML,
         ".htm":      InputFormat.HTML,
-        ".csv":      InputFormat.CSV,
         ".md":       InputFormat.MD,
         ".txt":      InputFormat.MD,
-        ".asciidoc": InputFormat.ASCIIDOC,
-        ".adoc":     InputFormat.ASCIIDOC,
         ".epub":     InputFormat.HTML,
     }
 else:
@@ -95,26 +92,39 @@ def _chunk_markdown(markdown: str, filename: str, max_chars: int = 3000) -> List
         content = section["content"]
         title = f"{Path(filename).stem} — {section['heading']}"
         if len(content) <= max_chars:
-            chunks.append({"page": len(chunks) + 1, "title": title,
-                           "content": content, "chunk_index": len(chunks)})
+            chunks.append({
+                "page": len(chunks) + 1,
+                "title": title,
+                "content": content,
+                "chunk_index": len(chunks),
+            })
         else:
             paragraphs = [p.strip() for p in content.split("\n\n") if p.strip()]
             buf = ""
             for para in paragraphs:
                 if buf and len(buf) + len(para) + 2 > max_chars:
-                    chunks.append({"page": len(chunks) + 1, "title": title,
-                                   "content": buf.strip(), "chunk_index": len(chunks)})
+                    chunks.append({
+                        "page": len(chunks) + 1,
+                        "title": title,
+                        "content": buf.strip(),
+                        "chunk_index": len(chunks),
+                    })
                     buf = para + "\n\n"
                 else:
                     buf += para + "\n\n"
             if buf.strip():
-                chunks.append({"page": len(chunks) + 1, "title": title,
-                               "content": buf.strip(), "chunk_index": len(chunks)})
+                chunks.append({
+                    "page": len(chunks) + 1,
+                    "title": title,
+                    "content": buf.strip(),
+                    "chunk_index": len(chunks),
+                })
 
     return chunks or [{"page": 1, "title": filename, "content": "(vide)", "chunk_index": 0}]
 
 
 def _fallback_parse(file_bytes: bytes, filename: str) -> str:
+    """Parser de secours sans Docling."""
     ext = Path(filename).suffix.lower()
 
     if ext in (".txt", ".md", ".csv", ".html", ".htm"):
@@ -127,11 +137,12 @@ def _fallback_parse(file_bytes: bytes, filename: str) -> str:
 
     if ext == ".pdf":
         try:
-            import pypdf, io
+            import pypdf
+            import io
             reader = pypdf.PdfReader(io.BytesIO(file_bytes))
             pages = [p.extract_text() for p in reader.pages if p.extract_text()]
             return "\n\n".join(pages) if pages else "(PDF vide ou non lisible)"
-        except Exception as e:
+        except Exception:
             try:
                 import pypdfium2 as pdfium
                 pdf = pdfium.PdfDocument(file_bytes)
@@ -142,7 +153,8 @@ def _fallback_parse(file_bytes: bytes, filename: str) -> str:
 
     if ext == ".docx":
         try:
-            import docx, io
+            import docx
+            import io
             doc = docx.Document(io.BytesIO(file_bytes))
             return "\n\n".join(p.text for p in doc.paragraphs if p.text.strip())
         except Exception as e:
@@ -152,15 +164,18 @@ def _fallback_parse(file_bytes: bytes, filename: str) -> str:
 
 
 def _convert_sync(tmp_path: str, ext: str, filename: str) -> List[Dict[str, Any]]:
+    """Conversion synchrone via Docling — exécutée dans un thread."""
     converter = _build_converter(ext)
     result = converter.convert(tmp_path)
     markdown: str = result.document.export_to_markdown()
     if not markdown or not markdown.strip():
-        return [{"page": 1, "title": filename, "content": "(document vide)", "chunk_index": 0}]
+        logger.warning(f"[Docling] Markdown vide pour '{filename}'")
+        return [{"page": 1, "title": filename, "content": "(document vide ou non lisible)", "chunk_index": 0}]
     return _chunk_markdown(markdown, filename)
 
 
 async def convert_document(file_bytes: bytes, filename: str) -> List[Dict[str, Any]]:
+    """Point d'entrée : bytes → chunks prêts pour l'embedding."""
     ext = Path(filename).suffix.lower()
 
     if _DOCLING_OK and ext in EXT_TO_FORMAT:
@@ -183,6 +198,7 @@ async def convert_document(file_bytes: bytes, filename: str) -> List[Dict[str, A
                 except OSError:
                     pass
     else:
+        # Fallback pour CSV et formats non supportés par Docling
         logger.info(f"[Fallback] Conversion '{filename}'")
         try:
             text = _fallback_parse(file_bytes, filename)
