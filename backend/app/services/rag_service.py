@@ -36,29 +36,32 @@ async def stream_rag_response(
     http_client: httpx.AsyncClient,
     document_ids: Optional[List[str]] = None,
     history: Optional[List[Dict]] = None,
+    temperature: Optional[float] = 0.1,
+    top_k: Optional[int] = None,
+    max_tokens: Optional[int] = 1024,
 ) -> AsyncGenerator[str, None]:
-    """Pipeline RAG complet avec streaming SSE."""
 
-    # 1. Embedding de la question
+    # 1. Embedding
     try:
         query_embedding = await get_embedding(question, http_client)
     except Exception as e:
         yield _sse({"type": "error", "error": f"Erreur embedding: {e}"})
         return
 
-    # 2. Recherche Qdrant
+    # 2. Recherche Qdrant avec top_k depuis settings ou paramètre
+    effective_top_k = top_k if top_k is not None else settings.TOP_K
     try:
         chunks = await search_chunks(
             query_embedding=query_embedding,
             user_id=user_id,
-            top_k=settings.TOP_K,
+            top_k=effective_top_k,
             document_ids=document_ids,
         )
     except Exception as e:
         yield _sse({"type": "error", "error": f"Erreur recherche: {e}"})
         return
 
-    # 3. Envoi des sources au frontend
+    # 3. Sources
     sources = [
         {
             "document_id": c.get("document_id", ""),
@@ -76,19 +79,16 @@ async def stream_rag_response(
         yield _sse({"type": "done"})
         return
 
-    # 4. Construction des messages avec historique
+    # 4. Construction messages avec historique
     prompt = _build_prompt(question, chunks)
     messages = [{"role": "system", "content": RAG_SYSTEM_PROMPT}]
-
     if history:
         for msg in history[-10:]:
             messages.append({"role": msg["role"], "content": msg["content"]})
-
     messages.append({"role": "user", "content": prompt})
 
-    # 5. Stream LLM
+    # 5. Stream LLM avec paramètres utilisateur
     stream_timeout = httpx.Timeout(connect=10.0, read=None, write=30.0, pool=5.0)
-
     try:
         async with http_client.stream(
             "POST",
@@ -97,7 +97,10 @@ async def stream_rag_response(
                 "model": model,
                 "messages": messages,
                 "stream": True,
-                "options": {"temperature": 0.1, "num_predict": 1024},
+                "options": {
+                    "temperature": temperature if temperature is not None else 0.1,
+                    "num_predict": max_tokens if max_tokens is not None else 1024,
+                },
             },
             timeout=stream_timeout,
         ) as response:
@@ -123,18 +126,12 @@ async def stream_rag_response(
 
 
 async def list_available_models(http_client: httpx.AsyncClient) -> List[str]:
-    """Retourne la liste des modèles Ollama réellement disponibles."""
     try:
-        response = await http_client.get(
-            f"{settings.OLLAMA_BASE_URL}/api/tags",
-            timeout=httpx.Timeout(10.0),
-        )
+        response = await http_client.get(f"{settings.OLLAMA_BASE_URL}/api/tags", timeout=httpx.Timeout(10.0))
         response.raise_for_status()
         available = [m["name"] for m in response.json().get("models", [])]
-        return [
-            m for m in settings.OLLAMA_AVAILABLE_MODELS
-            if any(m == a or m.split(":")[0] == a.split(":")[0] for a in available)
-        ]
+        return [m for m in settings.OLLAMA_AVAILABLE_MODELS
+                if any(m == a or m.split(":")[0] == a.split(":")[0] for a in available)]
     except Exception as e:
         logger.warning(f"Impossible de récupérer les modèles Ollama: {e}")
         return settings.OLLAMA_AVAILABLE_MODELS
