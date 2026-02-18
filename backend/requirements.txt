@@ -15,3 +15,5 @@ qdrant-client==1.12.1
 slowapi==0.1.9
 docling==2.15.0
 pypdfium2>=4.30.0
+pypdf>=3.0.0
+python-docx>=1.0.0
