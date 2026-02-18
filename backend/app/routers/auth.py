@@ -5,7 +5,10 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.dependencies import get_current_user
-from app.auth.service import authenticate_user, create_access_token, get_user_by_email, get_user_by_username, hash_password
+from app.auth.service import (
+    authenticate_user, create_access_token,
+    get_user_by_email, get_user_by_username, hash_password,
+)
 from app.models.database import User, get_db
 from app.models.schemas import Token, UserLogin, UserOut, UserRegister
 
@@ -15,10 +18,13 @@ logger = logging.getLogger(__name__)
 
 @router.post("/register", response_model=UserOut, status_code=201)
 async def register(data: UserRegister, db: AsyncSession = Depends(get_db)):
-    if await get_user_by_username(db, data.username):
-        raise HTTPException(status_code=400, detail="Nom d'utilisateur déjà utilisé")
-    if await get_user_by_email(db, data.email):
-        raise HTTPException(status_code=400, detail="Email déjà utilisé")
+    # FIX : message générique pour éviter l'énumération
+    # (un attaquant ne peut pas distinguer "username pris" vs "email pris")
+    if await get_user_by_username(db, data.username) or await get_user_by_email(db, data.email):
+        raise HTTPException(
+            status_code=400,
+            detail="Nom d'utilisateur ou email déjà utilisé",
+        )
 
     user = User(
         email=data.email,
@@ -37,9 +43,11 @@ async def register(data: UserRegister, db: AsyncSession = Depends(get_db)):
 async def login(data: UserLogin, db: AsyncSession = Depends(get_db)):
     user = await authenticate_user(db, data.username, data.password)
     if not user:
+        # FIX : ajout du header WWW-Authenticate requis par la spec HTTP 401
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Identifiants incorrects",
+            headers={"WWW-Authenticate": "Bearer"},
         )
     token = create_access_token({"sub": str(user.id), "role": user.role})
     return Token(access_token=token)
