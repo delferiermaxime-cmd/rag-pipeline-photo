@@ -6,6 +6,7 @@ Pipeline : fichier → Docling → Markdown structuré → chunks sémantiques
 Formats supportés : PDF, DOCX, DOC, DOTX, PPTX, PPT, XLSX, XLS,
                     ODT, ODS, ODP, HTML, HTM, CSV, MD, TXT, EPUB, AsciiDoc
 """
+import asyncio
 import logging
 import os
 import re
@@ -118,6 +119,23 @@ def _chunk_markdown(markdown: str, filename: str, max_chars: int = 3000) -> List
     return chunks or [{"page": 1, "title": filename, "content": "(vide)", "chunk_index": 0}]
 
 
+def _convert_sync(tmp_path: str, ext: str, filename: str) -> List[Dict[str, Any]]:
+    """
+    Conversion synchrone — exécutée dans un thread via asyncio.to_thread().
+    Docling est CPU-intensif : l'isoler dans un thread évite de bloquer
+    la boucle événementielle pendant le traitement.
+    """
+    converter = _build_converter(ext)
+    result = converter.convert(tmp_path)
+    markdown: str = result.document.export_to_markdown()
+
+    if not markdown or not markdown.strip():
+        logger.warning(f"[Docling] Markdown vide pour '{filename}'")
+        return [{"page": 1, "title": filename, "content": "(document vide ou non lisible)", "chunk_index": 0}]
+
+    return _chunk_markdown(markdown, filename)
+
+
 async def convert_document(file_bytes: bytes, filename: str) -> List[Dict[str, Any]]:
     """
     Point d'entrée : bytes → chunks Markdown prêts pour l'embedding.
@@ -140,15 +158,11 @@ async def convert_document(file_bytes: bytes, filename: str) -> List[Dict[str, A
             tmp.write(file_bytes)
             tmp_path = tmp.name
 
-        converter = _build_converter(ext)
-        result = converter.convert(tmp_path)
-        markdown: str = result.document.export_to_markdown()
+        # FIX : asyncio.to_thread() exécute la conversion dans un thread séparé
+        # → la boucle événementielle reste libre pour traiter d'autres requêtes
+        # pendant qu'un PDF lourd est en cours de traitement
+        chunks = await asyncio.to_thread(_convert_sync, tmp_path, ext, filename)
 
-        if not markdown or not markdown.strip():
-            logger.warning(f"[Docling] Markdown vide pour '{filename}'")
-            return [{"page": 1, "title": filename, "content": "(document vide ou non lisible)", "chunk_index": 0}]
-
-        chunks = _chunk_markdown(markdown, filename)
         logger.info(f"[Docling] {len(chunks)} chunks produits pour '{filename}'")
         return chunks
 
