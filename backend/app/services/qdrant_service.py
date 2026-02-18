@@ -59,7 +59,6 @@ async def upsert_chunks(
             id=str(uuid.uuid4()),
             vector=embedding,
             payload={
-                "user_id": user_id,
                 "document_id": document_id,
                 "title": chunk.get("title", ""),
                 "page": chunk.get("page", 1),
@@ -76,19 +75,21 @@ async def upsert_chunks(
 
 async def search_chunks(
     query_embedding: List[float],
-    user_id: str,
+    user_id: str = None,
     top_k: int = 5,
     document_ids: Optional[List[str]] = None,
 ) -> List[Dict[str, Any]]:
     client = get_client()
-    must = [FieldCondition(key="user_id", match=MatchValue(value=user_id))]
+    query_filter = None
     if document_ids:
-        must.append(FieldCondition(key="document_id", match=MatchAny(any=document_ids)))
+        query_filter = Filter(must=[
+            FieldCondition(key="document_id", match=MatchAny(any=document_ids))
+        ])
 
     results = await client.search(
         collection_name=settings.QDRANT_COLLECTION,
         query_vector=query_embedding,
-        query_filter=Filter(must=must),
+        query_filter=query_filter,
         limit=top_k,
         with_payload=True,
     )
@@ -104,14 +105,13 @@ async def search_chunks(
     ]
 
 
-async def delete_document_chunks(document_id: str, user_id: str) -> None:
+async def delete_document_chunks(document_id: str, user_id: str = None) -> None:
     client = get_client()
     await client.delete(
         collection_name=settings.QDRANT_COLLECTION,
         points_selector=FilterSelector(
             filter=Filter(must=[
                 FieldCondition(key="document_id", match=MatchValue(value=document_id)),
-                FieldCondition(key="user_id", match=MatchValue(value=user_id)),
             ])
         ),
     )
