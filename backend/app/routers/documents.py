@@ -121,7 +121,6 @@ async def list_documents(
 ):
     result = await db.execute(
         select(Document)
-        .where(Document.user_id == current_user.id)
         .order_by(Document.created_at.desc())
     )
     return result.scalars().all()
@@ -136,8 +135,7 @@ async def delete_document(
     doc = await db.get(Document, UUID(document_id))
     if not doc:
         raise HTTPException(404, "Document introuvable")
-    if str(doc.user_id) != str(current_user.id):
-        raise HTTPException(403, "Accès refusé")
+    # Base partagée : tout utilisateur authentifié peut supprimer
 
     await delete_document_chunks(document_id, str(current_user.id))
     await db.delete(doc)
