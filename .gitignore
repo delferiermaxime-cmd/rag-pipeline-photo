@@ -1,0 +1,13 @@
+.env
+__pycache__/
+*.py[cod]
+.venv/
+node_modules/
+.next/
+frontend/node_modules/
+frontend/.next/
+postgres_data/
+qdrant_data/
+ollama_data/
+*.log
+.DS_Store

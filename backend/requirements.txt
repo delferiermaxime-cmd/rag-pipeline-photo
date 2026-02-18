@@ -1,0 +1,16 @@
+fastapi==0.115.0
+uvicorn[standard]==0.32.0
+python-multipart==0.0.12
+pydantic==2.9.2
+pydantic-settings==2.6.0
+pydantic[email]
+sqlalchemy[asyncio]==2.0.36
+asyncpg==0.30.0
+alembic==1.14.0
+passlib[bcrypt]==1.7.4
+python-jose[cryptography]==3.3.0
+httpx==0.28.0
+qdrant-client==1.12.1
+slowapi==0.1.9
+docling==2.15.0
+pypdfium2>=4.30.0
