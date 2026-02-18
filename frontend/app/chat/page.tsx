@@ -15,29 +15,19 @@ interface Message {
   sources?: Source[]
 }
 
-// Parse un fichier texte/pdf côté client (upload temporaire dans la conversation)
+function getSettings() {
+  if (typeof window === 'undefined') return { temperature: 0.1, topK: 5, maxTokens: 1024, systemPrompt: '' }
+  try {
+    const saved = localStorage.getItem('rag_settings')
+    return saved ? JSON.parse(saved) : { temperature: 0.1, topK: 5, maxTokens: 1024, systemPrompt: '' }
+  } catch { return { temperature: 0.1, topK: 5, maxTokens: 1024, systemPrompt: '' } }
+}
+
 async function parseFileLocally(file: File): Promise<string> {
   const ext = file.name.split('.').pop()?.toLowerCase() || ''
-
   if (['txt', 'md', 'csv', 'html', 'htm'].includes(ext)) {
     return await file.text()
   }
-
-  if (ext === 'pdf') {
-    // Lire le PDF avec pdf.js si disponible, sinon envoyer le texte brut
-    try {
-      const arrayBuffer = await file.arrayBuffer()
-      // Extraction basique du texte PDF sans librairie
-      const bytes = new Uint8Array(arrayBuffer)
-      const text = new TextDecoder('latin1').decode(bytes)
-      // Extraction des chaînes lisibles
-      const readable = text.match(/[^\x00-\x08\x0E-\x1F\x7F-\xFF]{4,}/g) || []
-      return readable.join(' ').replace(/\s+/g, ' ').trim()
-    } catch {
-      return `[Contenu de ${file.name} - format PDF non prévisualisable]`
-    }
-  }
-
   return `[Fichier: ${file.name} - ${(file.size / 1024).toFixed(1)} KB]`
 }
 
@@ -53,7 +43,6 @@ export default function ChatPage() {
   const [conversations, setConversations] = useState<Conversation[]>([])
   const [activeConvId, setActiveConvId] = useState<string | undefined>(undefined)
   const [showHistory, setShowHistory] = useState(false)
-  // Fichier temporaire pour la conversation (pas dans la base vectorielle)
   const [inlineFile, setInlineFile] = useState<{ name: string; content: string } | null>(null)
   const [loadingFile, setLoadingFile] = useState(false)
   const bottomRef = useRef<HTMLDivElement>(null)
@@ -104,7 +93,6 @@ export default function ChatPage() {
     loadConversations()
   }
 
-  // Upload temporaire — parse le fichier localement, pas dans Qdrant
   async function handleInlineFile(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0]
     if (!file) return
@@ -123,11 +111,11 @@ export default function ChatPage() {
   function handleSend() {
     if (!input.trim() || streaming) return
     const question = input.trim()
+    const settings = getSettings()
     setInput('')
 
-    // Si un fichier inline est présent, l'injecter dans la question
     const fullQuestion = inlineFile
-      ? `[Document: ${inlineFile.name}]\n${inlineFile.content.slice(0, 8000)}\n\n---\n${question}`
+      ? `[Document joint: ${inlineFile.name}]\n${inlineFile.content.slice(0, 8000)}\n\n---\n${question}`
       : question
 
     const userMsg: Message = { role: 'user', content: question }
@@ -172,6 +160,7 @@ export default function ChatPage() {
       },
       (id) => setActiveConvId(id),
       activeConvId,
+      settings,
     )
   }
 
@@ -186,7 +175,6 @@ export default function ChatPage() {
     <div className={styles.layout}>
       <Sidebar username={user?.username} model={model} onModelChange={setModel} models={models} />
 
-      {/* Panneau historique */}
       {showHistory && (
         <div className={styles.historyPanel}>
           <div className={styles.historyHeader}>
@@ -207,11 +195,7 @@ export default function ChatPage() {
                 onClick={() => loadConversation(conv.id)}
               >
                 <span className={styles.convTitle}>{conv.title}</span>
-                <button
-                  className="ghost"
-                  onClick={(e) => handleDeleteConv(conv.id, e)}
-                  style={{ padding: 2, opacity: 0.5 }}
-                >
+                <button className="ghost" onClick={(e) => handleDeleteConv(conv.id, e)} style={{ padding: 2, opacity: 0.5 }}>
                   <Trash2 size={12} />
                 </button>
               </div>
@@ -221,17 +205,12 @@ export default function ChatPage() {
       )}
 
       <main className={styles.main}>
-        {/* Barre outils */}
         <div className={styles.toolbar}>
-          <button
-            className={`ghost ${styles.historyBtn}`}
-            onClick={() => setShowHistory(!showHistory)}
-            title="Historique des conversations"
-          >
-            <ChevronLeft size={16} style={{ transform: showHistory ? 'rotate(180deg)' : 'none' }} />
+          <button className={`ghost ${styles.historyBtn}`} onClick={() => setShowHistory(!showHistory)}>
+            <ChevronLeft size={16} style={{ transform: showHistory ? 'rotate(180deg)' : 'none', transition: '0.2s' }} />
             Historique
           </button>
-          <button className="ghost" onClick={newConversation} title="Nouvelle conversation">
+          <button className="ghost" onClick={newConversation}>
             <Plus size={16} /> Nouvelle
           </button>
         </div>
@@ -241,7 +220,7 @@ export default function ChatPage() {
             <div className={styles.empty}>
               <p>Posez une question sur vos documents</p>
               <p style={{ fontSize: 13, opacity: 0.5, marginTop: 8 }}>
-                Utilisez 📎 pour joindre un fichier temporaire à la conversation
+                📎 pour joindre un fichier temporaire · 📁 Upload pour indexer dans la base
               </p>
             </div>
           )}
@@ -259,10 +238,7 @@ export default function ChatPage() {
 
               {msg.sources && msg.sources.length > 0 && (
                 <div className={styles.sourcesWrapper}>
-                  <button
-                    className={styles.sourcesToggle}
-                    onClick={() => setShowSources(showSources === i ? null : i)}
-                  >
+                  <button className={styles.sourcesToggle} onClick={() => setShowSources(showSources === i ? null : i)}>
                     {showSources === i ? '▾' : '▸'} {msg.sources.length} source{msg.sources.length > 1 ? 's' : ''}
                   </button>
                   {showSources === i && (
@@ -286,7 +262,6 @@ export default function ChatPage() {
           <div ref={bottomRef} />
         </div>
 
-        {/* Fichier inline attaché */}
         {inlineFile && (
           <div className={styles.inlineFile}>
             <Paperclip size={12} />
@@ -300,42 +275,20 @@ export default function ChatPage() {
 
         <div className={styles.inputArea}>
           <div className={styles.inputWrapper}>
-            {/* Bouton upload temporaire */}
-            <button
-              onClick={() => fileInputRef.current?.click()}
-              className="ghost"
-              title="Joindre un fichier à cette conversation (non indexé)"
-              disabled={loadingFile || streaming}
-              style={{ padding: '6px 8px' }}
-            >
+            <button onClick={() => fileInputRef.current?.click()} className="ghost"
+              title="Joindre un fichier temporaire" disabled={loadingFile || streaming} style={{ padding: '6px 8px' }}>
               {loadingFile ? <span className="spinner" style={{ width: 16, height: 16 }} /> : <Paperclip size={16} />}
             </button>
-            <input
-              ref={fileInputRef}
-              type="file"
-              style={{ display: 'none' }}
-              accept=".txt,.md,.csv,.html,.htm,.pdf"
-              onChange={handleInlineFile}
-            />
-
-            <textarea
-              value={input}
-              onChange={e => setInput(e.target.value)}
-              onKeyDown={handleKeyDown}
-              placeholder="Posez une question… (Entrée pour envoyer)"
-              rows={1}
-              className={styles.input}
-              disabled={streaming}
-            />
-            <button
-              onClick={handleSend}
-              disabled={!input.trim() || streaming}
-              className={`primary ${styles.sendBtn}`}
-            >
+            <input ref={fileInputRef} type="file" style={{ display: 'none' }}
+              accept=".txt,.md,.csv,.html,.htm" onChange={handleInlineFile} />
+            <textarea value={input} onChange={e => setInput(e.target.value)} onKeyDown={handleKeyDown}
+              placeholder="Posez une question… (Entrée pour envoyer)" rows={1}
+              className={styles.input} disabled={streaming} />
+            <button onClick={handleSend} disabled={!input.trim() || streaming} className={`primary ${styles.sendBtn}`}>
               {streaming ? <span className="spinner" style={{ width: 16, height: 16 }} /> : <Send size={16} />}
             </button>
           </div>
-          <p className={styles.hint}>Modèle actif: <strong>{model}</strong></p>
+          <p className={styles.hint}>Modèle: <strong>{model}</strong></p>
         </div>
       </main>
     </div>
