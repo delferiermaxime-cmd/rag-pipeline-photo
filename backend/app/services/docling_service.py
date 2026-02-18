@@ -34,6 +34,8 @@ if _DOCLING_OK:
         ".odt":      InputFormat.DOCX,
         ".html":     InputFormat.HTML,
         ".htm":      InputFormat.HTML,
+        ".md":       InputFormat.MD,
+        ".txt":      InputFormat.MD,
         ".epub":     InputFormat.HTML,
     }
 else:
@@ -60,10 +62,25 @@ def _build_converter(ext: str) -> "DocumentConverter":
     return DocumentConverter()
 
 
-def _chunk_markdown(markdown: str, filename: str, max_chars: int = 3000) -> List[Dict[str, Any]]:
+def _chunk_markdown(
+    markdown: str,
+    filename: str,
+    max_chars: int = 3000,
+    overlap: int = 450,
+) -> List[Dict[str, Any]]:
+    """
+    Découpe le markdown en chunks sémantiques avec overlap.
+
+    Stratégie :
+    1. Découpe d'abord par headings (sections structurées)
+    2. Sous-découpe les sections longues par paragraphes (\n\n)
+    3. Ajoute un overlap de `overlap` chars depuis le chunk précédent
+       pour éviter de couper le contexte entre deux chunks.
+    """
     heading_re = re.compile(r"^(#{1,6}\s.+)$", re.MULTILINE)
     parts = heading_re.split(markdown)
 
+    # ── Étape 1 : regrouper par section heading ──────────────────────────────
     sections: List[Dict[str, str]] = []
     current_heading = Path(filename).stem
     buffer = ""
@@ -85,38 +102,41 @@ def _chunk_markdown(markdown: str, filename: str, max_chars: int = 3000) -> List
     if not sections:
         sections = [{"heading": Path(filename).stem, "content": markdown}]
 
+    # ── Étape 2 : sous-découpe avec overlap ──────────────────────────────────
     chunks: List[Dict[str, Any]] = []
+    last_chunk_tail = ""  # derniers `overlap` chars du chunk précédent
+
+    def _add_chunk(title: str, text: str) -> None:
+        nonlocal last_chunk_tail
+        # Préfixer avec l'overlap du chunk précédent
+        prefixed = (last_chunk_tail + "\n\n" + text).strip() if last_chunk_tail else text.strip()
+        chunks.append({
+            "page": len(chunks) + 1,
+            "title": title,
+            "content": prefixed,
+            "chunk_index": len(chunks),
+        })
+        # Conserver les derniers `overlap` chars pour le prochain chunk
+        last_chunk_tail = text.strip()[-overlap:] if len(text.strip()) > overlap else text.strip()
+
     for section in sections:
-        content = section["content"]
+        text = section["content"]
         title = f"{Path(filename).stem} — {section['heading']}"
-        if len(content) <= max_chars:
-            chunks.append({
-                "page": len(chunks) + 1,
-                "title": title,
-                "content": content,
-                "chunk_index": len(chunks),
-            })
+
+        if len(text) <= max_chars:
+            _add_chunk(title, text)
         else:
-            paragraphs = [p.strip() for p in content.split("\n\n") if p.strip()]
+            # Sous-découpe par paragraphes (\n\n)
+            paragraphs = [p.strip() for p in text.split("\n\n") if p.strip()]
             buf = ""
             for para in paragraphs:
                 if buf and len(buf) + len(para) + 2 > max_chars:
-                    chunks.append({
-                        "page": len(chunks) + 1,
-                        "title": title,
-                        "content": buf.strip(),
-                        "chunk_index": len(chunks),
-                    })
+                    _add_chunk(title, buf.strip())
                     buf = para + "\n\n"
                 else:
                     buf += para + "\n\n"
             if buf.strip():
-                chunks.append({
-                    "page": len(chunks) + 1,
-                    "title": title,
-                    "content": buf.strip(),
-                    "chunk_index": len(chunks),
-                })
+                _add_chunk(title, buf.strip())
 
     return chunks or [{"page": 1, "title": filename, "content": "(vide)", "chunk_index": 0}]
 
