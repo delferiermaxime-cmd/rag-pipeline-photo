@@ -72,7 +72,7 @@ services:
       QDRANT_PORT: 6333
       OLLAMA_BASE_URL: http://ollama:11434
       # FIX : ${VAR:?msg} fait échouer docker compose si SECRET_KEY absent du .env
-      SECRET_KEY: ${SECRET_KEY:?Erreur: copiez .env.example en .env et définissez SECRET_KEY}
+      SECRET_KEY: "${SECRET_KEY}"
       DEBUG: "false"
       # Tunnel SSH : ajoutez votre port local, ex: http://localhost:8080
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost,http://localhost:3000,http://localhost:8080}
