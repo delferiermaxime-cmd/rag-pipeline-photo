@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+import json
 from typing import List
 from pydantic import field_validator
 from pydantic_settings import BaseSettings
@@ -47,8 +48,9 @@ class Settings(BaseSettings):
     CHUNK_OVERLAP: int = 50
     TOP_K: int = 5
 
-    # CORS — configurable via .env pour le tunnel SSH
-    # Ex : CORS_ORIGINS=http://localhost,http://localhost:8080
+    # CORS — FIX : validator robuste qui accepte les deux formats :
+    #   - virgules  : http://localhost,http://localhost:8080
+    #   - JSON list : ["http://localhost","http://localhost:8080"]
     CORS_ORIGINS: List[str] = [
         "http://localhost",
         "http://localhost:3000",
@@ -59,6 +61,14 @@ class Settings(BaseSettings):
     @classmethod
     def parse_cors(cls, v):
         if isinstance(v, str):
+            v = v.strip()
+            # FIX : détecte le format JSON et le parse correctement
+            if v.startswith("["):
+                try:
+                    return json.loads(v)
+                except json.JSONDecodeError:
+                    pass
+            # Format virgules (format recommandé dans .env.example)
             return [o.strip() for o in v.split(",") if o.strip()]
         return v
 
@@ -66,7 +76,6 @@ class Settings(BaseSettings):
     MAX_FILE_SIZE: int = 50 * 1024 * 1024  # 50 MB
     UPLOAD_DIR: str = "/tmp/uploads"
 
-    # Extensions sans point — comparées avec suffix.lstrip(".")
     ALLOWED_EXTENSIONS: List[str] = [
         "pdf", "txt", "md",
         "docx", "dotx", "doc",
