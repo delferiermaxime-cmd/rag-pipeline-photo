@@ -23,12 +23,17 @@ def _sse(data: dict) -> str:
     return "data: " + json.dumps(data) + "\n\n"
 
 
-def _build_prompt(question: str, chunks: List[Dict[str, Any]]) -> str:
+def _build_prompt(question: str, chunks: List[Dict[str, Any]], context_max_chars: int = 12000) -> str:
     parts = []
+    total_chars = 0
     for i, c in enumerate(chunks):
         page = c.get("page", "")
         page_str = f" (Page {page})" if page else ""
-        parts.append(f"[Source {i+1}: {c.get('title', 'Document')}{page_str}]\n{c.get('content', '')}")
+        chunk_text = f"[Source {i+1}: {c.get('title', 'Document')}{page_str}]\n{c.get('content', '')}"
+        if total_chars + len(chunk_text) > context_max_chars:
+            break
+        parts.append(chunk_text)
+        total_chars += len(chunk_text)
     return f"CONTEXTE:\n{chr(10).join(parts)}\n\nQUESTION: {question}"
 
 
@@ -42,6 +47,8 @@ async def stream_rag_response(
     temperature: Optional[float] = 0.1,
     top_k: Optional[int] = None,
     max_tokens: Optional[int] = 1024,
+    min_score: Optional[float] = 0.3,
+    context_max_chars: Optional[int] = 12000,
 ) -> AsyncGenerator[str, None]:
 
     # 1. Embedding
@@ -59,6 +66,7 @@ async def stream_rag_response(
             user_id=user_id,
             top_k=effective_top_k,
             document_ids=document_ids,
+            min_score=min_score if min_score is not None else 0.0,
         )
     except Exception as e:
         yield _sse({"type": "error", "error": f"Erreur recherche: {e}"})
@@ -83,7 +91,7 @@ async def stream_rag_response(
         return
 
     # 4. Construction messages avec historique
-    prompt = _build_prompt(question, chunks)
+    prompt = _build_prompt(question, chunks, context_max_chars=context_max_chars if context_max_chars else 12000)
     messages = [{"role": "system", "content": RAG_SYSTEM_PROMPT}]
     if history:
         for msg in history[-10:]:
@@ -91,6 +99,7 @@ async def stream_rag_response(
     messages.append({"role": "user", "content": prompt})
 
     # 5. Stream LLM avec paramètres utilisateur
+    logger.info(f"RAG: {len(chunks)} chunks, min_score={min_score}, context_max={context_max_chars}")
     stream_timeout = httpx.Timeout(connect=10.0, read=None, write=30.0, pool=5.0)
     try:
         async with http_client.stream(
