@@ -23,6 +23,15 @@ async function apiFetch(path: string, options: RequestInit = {}) {
   return res
 }
 
+function extractErrorMessage(detail: any, fallback: string): string {
+  if (!detail) return fallback
+  if (typeof detail === 'string') return detail
+  if (Array.isArray(detail)) {
+    return detail.map((e: any) => e.msg || JSON.stringify(e)).join(', ')
+  }
+  return fallback
+}
+
 export async function login(username: string, password: string) {
   const res = await apiFetch('/auth/login', {
     method: 'POST',
@@ -30,7 +39,7 @@ export async function login(username: string, password: string) {
   })
   if (!res.ok) {
     const err = await res.json()
-    throw new Error(err.detail || 'Erreur de connexion')
+    throw new Error(extractErrorMessage(err.detail, 'Erreur de connexion'))
   }
   return res.json()
 }
@@ -42,7 +51,7 @@ export async function register(email: string, username: string, password: string
   })
   if (!res.ok) {
     const err = await res.json()
-    throw new Error(err.detail || 'Erreur inscription')
+    throw new Error(extractErrorMessage(err.detail, 'Erreur inscription'))
   }
   return res.json()
 }
