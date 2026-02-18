@@ -12,9 +12,7 @@ async function apiFetch(path: string, options: RequestInit = {}) {
     ...(options.headers as Record<string, string>),
   }
   if (token) headers['Authorization'] = `Bearer ${token}`
-
   const res = await fetch(`${API_BASE}/api/v1${path}`, { ...options, headers })
-
   if (res.status === 401) {
     localStorage.removeItem('token')
     window.location.href = '/login'
@@ -31,28 +29,16 @@ function extractErrorMessage(detail: any, fallback: string): string {
 }
 
 export async function login(username: string, password: string) {
-  const res = await apiFetch('/auth/login', {
-    method: 'POST',
-    body: JSON.stringify({ username, password }),
-  })
-  if (!res.ok) {
-    const err = await res.json()
-    throw new Error(extractErrorMessage(err.detail, 'Erreur de connexion'))
-  }
+  const res = await apiFetch('/auth/login', { method: 'POST', body: JSON.stringify({ username, password }) })
+  if (!res.ok) { const err = await res.json(); throw new Error(extractErrorMessage(err.detail, 'Erreur de connexion')) }
   const data = await res.json()
   localStorage.setItem('token', data.access_token)
   return data
 }
 
 export async function register(email: string, username: string, password: string) {
-  const res = await apiFetch('/auth/register', {
-    method: 'POST',
-    body: JSON.stringify({ email, username, password }),
-  })
-  if (!res.ok) {
-    const err = await res.json()
-    throw new Error(extractErrorMessage(err.detail, 'Erreur inscription'))
-  }
+  const res = await apiFetch('/auth/register', { method: 'POST', body: JSON.stringify({ email, username, password }) })
+  if (!res.ok) { const err = await res.json(); throw new Error(extractErrorMessage(err.detail, 'Erreur inscription')) }
   return res.json()
 }
 
@@ -62,20 +48,14 @@ export async function getMe() {
   return res.json()
 }
 
-// ── Documents (base vectorielle persistante) ──────────────────────────────────
 export async function uploadDocument(file: File) {
   const token = getToken()
   const form = new FormData()
   form.append('file', file)
   const res = await fetch(`${API_BASE}/api/v1/documents/upload`, {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${token}` },
-    body: form,
+    method: 'POST', headers: { Authorization: `Bearer ${token}` }, body: form,
   })
-  if (!res.ok) {
-    const err = await res.json()
-    throw new Error(err.detail || 'Erreur upload')
-  }
+  if (!res.ok) { const err = await res.json(); throw new Error(err.detail || 'Erreur upload') }
   return res.json()
 }
 
@@ -90,7 +70,6 @@ export async function deleteDocument(id: string) {
   if (!res.ok) throw new Error('Erreur suppression')
 }
 
-// ── Conversations (historique) ────────────────────────────────────────────────
 export async function listConversations(): Promise<Conversation[]> {
   const res = await apiFetch('/chat/conversations')
   if (!res.ok) throw new Error('Erreur chargement conversations')
@@ -108,7 +87,6 @@ export async function deleteConversation(id: string) {
   if (!res.ok) throw new Error('Erreur suppression conversation')
 }
 
-// ── Chat streaming ────────────────────────────────────────────────────────────
 export async function getModels() {
   const res = await apiFetch('/chat/models')
   if (!res.ok) throw new Error('Erreur chargement modèles')
@@ -124,35 +102,34 @@ export function streamChat(
   onError: (err: string) => void,
   onConversationId: (id: string) => void,
   conversationId?: string,
+  settings?: { temperature?: number; topK?: number; maxTokens?: number },
 ): () => void {
   const token = getToken()
   const controller = new AbortController()
 
   fetch(`${API_BASE}/api/v1/chat/stream`, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${token}`,
-    },
-    body: JSON.stringify({ question, model, conversation_id: conversationId || null }),
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    body: JSON.stringify({
+      question,
+      model,
+      conversation_id: conversationId || null,
+      temperature: settings?.temperature,
+      top_k: settings?.topK,
+      max_tokens: settings?.maxTokens,
+    }),
     signal: controller.signal,
   }).then(async (res) => {
-    if (!res.ok) {
-      onError('Erreur serveur')
-      return
-    }
+    if (!res.ok) { onError('Erreur serveur'); return }
     const reader = res.body!.getReader()
     const decoder = new TextDecoder()
     let buffer = ''
-
     while (true) {
       const { done, value } = await reader.read()
       if (done) break
-
       buffer += decoder.decode(value, { stream: true })
       const lines = buffer.split('\n')
       buffer = lines.pop() || ''
-
       for (const line of lines) {
         if (line.startsWith('data: ')) {
           try {
@@ -166,39 +143,14 @@ export function streamChat(
         }
       }
     }
-  }).catch((err) => {
-    if (err.name !== 'AbortError') onError(err.message)
-  })
+  }).catch((err) => { if (err.name !== 'AbortError') onError(err.message) })
 
   return () => controller.abort()
 }
 
-// ── Types ─────────────────────────────────────────────────────────────────────
-export interface Source {
-  document_id: string
-  title: string
-  page: number | null
-  content: string
-  score: number
-}
-
-export interface Document {
-  id: string
-  original_name: string
-  file_type: string
-  status: string
-  chunk_count: number
-  created_at: string
-  error_message?: string
-}
-
-export interface Conversation {
-  id: string
-  title: string
-  created_at: string
-  updated_at: string
-}
-
+export interface Source { document_id: string; title: string; page: number | null; content: string; score: number }
+export interface Document { id: string; original_name: string; file_type: string; status: string; chunk_count: number; created_at: string; error_message?: string }
+export interface Conversation { id: string; title: string; created_at: string; updated_at: string }
 export interface ConversationDetail extends Conversation {
   messages: { id: string; role: string; content: string; created_at: string }[]
 }
