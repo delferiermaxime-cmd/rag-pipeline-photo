@@ -26,9 +26,7 @@ async function apiFetch(path: string, options: RequestInit = {}) {
 function extractErrorMessage(detail: any, fallback: string): string {
   if (!detail) return fallback
   if (typeof detail === 'string') return detail
-  if (Array.isArray(detail)) {
-    return detail.map((e: any) => e.msg || JSON.stringify(e)).join(', ')
-  }
+  if (Array.isArray(detail)) return detail.map((e: any) => e.msg || JSON.stringify(e)).join(', ')
   return fallback
 }
 
@@ -41,7 +39,9 @@ export async function login(username: string, password: string) {
     const err = await res.json()
     throw new Error(extractErrorMessage(err.detail, 'Erreur de connexion'))
   }
-  return res.json()
+  const data = await res.json()
+  localStorage.setItem('token', data.access_token)
+  return data
 }
 
 export async function register(email: string, username: string, password: string) {
@@ -62,6 +62,7 @@ export async function getMe() {
   return res.json()
 }
 
+// ── Documents (base vectorielle persistante) ──────────────────────────────────
 export async function uploadDocument(file: File) {
   const token = getToken()
   const form = new FormData()
@@ -89,6 +90,25 @@ export async function deleteDocument(id: string) {
   if (!res.ok) throw new Error('Erreur suppression')
 }
 
+// ── Conversations (historique) ────────────────────────────────────────────────
+export async function listConversations(): Promise<Conversation[]> {
+  const res = await apiFetch('/chat/conversations')
+  if (!res.ok) throw new Error('Erreur chargement conversations')
+  return res.json()
+}
+
+export async function getConversation(id: string): Promise<ConversationDetail> {
+  const res = await apiFetch(`/chat/conversations/${id}`)
+  if (!res.ok) throw new Error('Erreur chargement conversation')
+  return res.json()
+}
+
+export async function deleteConversation(id: string) {
+  const res = await apiFetch(`/chat/conversations/${id}`, { method: 'DELETE' })
+  if (!res.ok) throw new Error('Erreur suppression conversation')
+}
+
+// ── Chat streaming ────────────────────────────────────────────────────────────
 export async function getModels() {
   const res = await apiFetch('/chat/models')
   if (!res.ok) throw new Error('Erreur chargement modèles')
@@ -102,6 +122,8 @@ export function streamChat(
   onSources: (sources: Source[]) => void,
   onDone: () => void,
   onError: (err: string) => void,
+  onConversationId: (id: string) => void,
+  conversationId?: string,
 ): () => void {
   const token = getToken()
   const controller = new AbortController()
@@ -112,7 +134,7 @@ export function streamChat(
       'Content-Type': 'application/json',
       Authorization: `Bearer ${token}`,
     },
-    body: JSON.stringify({ question, model }),
+    body: JSON.stringify({ question, model, conversation_id: conversationId || null }),
     signal: controller.signal,
   }).then(async (res) => {
     if (!res.ok) {
@@ -135,7 +157,8 @@ export function streamChat(
         if (line.startsWith('data: ')) {
           try {
             const data = JSON.parse(line.slice(6))
-            if (data.type === 'token') onToken(data.token)
+            if (data.type === 'conversation_id') onConversationId(data.conversation_id)
+            else if (data.type === 'token') onToken(data.token)
             else if (data.type === 'sources') onSources(data.sources)
             else if (data.type === 'done') onDone()
             else if (data.type === 'error') onError(data.error)
@@ -150,6 +173,7 @@ export function streamChat(
   return () => controller.abort()
 }
 
+// ── Types ─────────────────────────────────────────────────────────────────────
 export interface Source {
   document_id: string
   title: string
@@ -166,4 +190,15 @@ export interface Document {
   chunk_count: number
   created_at: string
   error_message?: string
+}
+
+export interface Conversation {
+  id: string
+  title: string
+  created_at: string
+  updated_at: string
+}
+
+export interface ConversationDetail extends Conversation {
+  messages: { id: string; role: string; content: string; created_at: string }[]
 }
