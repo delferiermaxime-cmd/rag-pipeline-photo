@@ -32,7 +32,7 @@ export default function RegisterPage() {
         <h1 className={styles.title}>RAG Local</h1>
         <p className={styles.subtitle}>Créer un compte</p>
 
-        <form onSubmit={handleSubmit} className={styles.form}>
+        <form onSubmit={handleSubmit} className={styles.form} noValidate>
           <div className={styles.field}>
             <label>Email</label>
             <input
