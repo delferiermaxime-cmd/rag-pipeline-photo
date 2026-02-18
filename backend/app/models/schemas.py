@@ -36,6 +36,8 @@ class ChatMessageRequest(BaseModel):
     temperature: Optional[float] = 0.1
     top_k: Optional[int] = 5
     max_tokens: Optional[int] = 1024
+    min_score: Optional[float] = 0.3
+    context_max_chars: Optional[int] = 12000
 
 ChatMessage = ChatMessageRequest
 
