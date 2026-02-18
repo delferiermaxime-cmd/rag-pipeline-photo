@@ -11,9 +11,13 @@ from app.services.qdrant_service import search_chunks
 
 logger = logging.getLogger(__name__)
 
-RAG_SYSTEM_PROMPT = """Tu réponds uniquement à partir du contexte fourni. Si la réponse n'est pas dans le contexte, dis "Information non trouvée dans les documents fournis."
+RAG_SYSTEM_PROMPT = """Tu es un assistant qui répond aux questions à partir des documents fournis. Si la réponse n'est pas dans le contexte, dis "Information non trouvée dans les documents fournis."
 
-Sois précis, concis et cite les sources quand c'est pertinent."""
+Sois précis et concis."""
+
+
+def _sse(data: dict) -> str:
+    return "data: " + json.dumps(data) + "\n\n"
 
 
 def _build_prompt(question: str, chunks: List[Dict[str, Any]]) -> str:
@@ -31,15 +35,15 @@ async def stream_rag_response(
     model: str,
     http_client: httpx.AsyncClient,
     document_ids: Optional[List[str]] = None,
+    history: Optional[List[Dict]] = None,
 ) -> AsyncGenerator[str, None]:
     """Pipeline RAG complet avec streaming SSE."""
 
     # 1. Embedding de la question
-    # FIX : on passe le client partagé — cohérent avec le reste du pipeline
     try:
         query_embedding = await get_embedding(question, http_client)
     except Exception as e:
-        yield f"data: {json.dumps({'type': 'error', 'error': f'Erreur embedding: {e}'})}\n\n"
+        yield _sse({"type": "error", "error": f"Erreur embedding: {e}"})
         return
 
     # 2. Recherche Qdrant
@@ -51,7 +55,7 @@ async def stream_rag_response(
             document_ids=document_ids,
         )
     except Exception as e:
-        yield f"data: {json.dumps({'type': 'error', 'error': f'Erreur recherche: {e}'})}\n\n"
+        yield _sse({"type": "error", "error": f"Erreur recherche: {e}"})
         return
 
     # 3. Envoi des sources au frontend
@@ -65,15 +69,24 @@ async def stream_rag_response(
         }
         for c in chunks
     ]
-    yield f"data: {json.dumps({'type': 'sources', 'sources': sources})}\n\n"
+    yield _sse({"type": "sources", "sources": sources})
 
     if not chunks:
-        yield f"data: {json.dumps({'type': 'token', 'token': 'Information non trouvée dans les documents fournis.'})}\n\n"
-        yield f"data: {json.dumps({'type': 'done'})}\n\n"
+        yield _sse({"type": "token", "token": "Information non trouvée dans les documents fournis."})
+        yield _sse({"type": "done"})
         return
 
-    # 4. Stream LLM — timeout read=None car la réponse peut être longue
+    # 4. Construction des messages avec historique
     prompt = _build_prompt(question, chunks)
+    messages = [{"role": "system", "content": RAG_SYSTEM_PROMPT}]
+
+    if history:
+        for msg in history[-10:]:
+            messages.append({"role": msg["role"], "content": msg["content"]})
+
+    messages.append({"role": "user", "content": prompt})
+
+    # 5. Stream LLM
     stream_timeout = httpx.Timeout(connect=10.0, read=None, write=30.0, pool=5.0)
 
     try:
@@ -82,10 +95,7 @@ async def stream_rag_response(
             f"{settings.OLLAMA_BASE_URL}/api/chat",
             json={
                 "model": model,
-                "messages": [
-                    {"role": "system", "content": RAG_SYSTEM_PROMPT},
-                    {"role": "user", "content": prompt},
-                ],
+                "messages": messages,
                 "stream": True,
                 "options": {"temperature": 0.1, "num_predict": 1024},
             },
@@ -98,18 +108,18 @@ async def stream_rag_response(
                 try:
                     data = json.loads(line)
                     if data.get("done"):
-                        yield f"data: {json.dumps({'type': 'done'})}\n\n"
+                        yield _sse({"type": "done"})
                         break
                     token = data.get("message", {}).get("content", "")
                     if token:
-                        yield f"data: {json.dumps({'type': 'token', 'token': token})}\n\n"
+                        yield _sse({"type": "token", "token": token})
                 except json.JSONDecodeError:
                     continue
     except httpx.TimeoutException:
-        yield f"data: {json.dumps({'type': 'error', 'error': f'Timeout: le modèle {model} met trop de temps à répondre'})}\n\n"
+        yield _sse({"type": "error", "error": f"Timeout: le modèle {model} met trop de temps à répondre"})
     except Exception as e:
         logger.error(f"Erreur streaming LLM: {e}")
-        yield f"data: {json.dumps({'type': 'error', 'error': str(e)})}\n\n"
+        yield _sse({"type": "error", "error": str(e)})
 
 
 async def list_available_models(http_client: httpx.AsyncClient) -> List[str]:
