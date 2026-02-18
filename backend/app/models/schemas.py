@@ -3,7 +3,7 @@ from datetime import datetime
 from typing import List, Optional
 from uuid import UUID
 
-from pydantic import BaseModel, EmailStr, Field, field_validator
+from pydantic import BaseModel, EmailStr, Field
 
 
 # ── Auth ──────────────────────────────────────────────────────────────────────
@@ -49,12 +49,47 @@ class DocumentOut(BaseModel):
 
 
 # ── Chat ──────────────────────────────────────────────────────────────────────
-class ChatMessage(BaseModel):
+class ChatMessageRequest(BaseModel):
     question: str = Field(..., min_length=1, max_length=4000)
     model: str = Field(default="gemma3:4b")
     document_ids: Optional[List[str]] = None
+    conversation_id: Optional[str] = None
 
 
+# Garder l'ancien nom pour compatibilité
+ChatMessage = ChatMessageRequest
+
+
+# ── Conversations ─────────────────────────────────────────────────────────────
+class MessageOut(BaseModel):
+    id: UUID
+    role: str
+    content: str
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class ConversationOut(BaseModel):
+    id: UUID
+    title: str
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class ConversationDetail(BaseModel):
+    id: UUID
+    title: str
+    created_at: datetime
+    updated_at: datetime
+    messages: List[MessageOut] = []
+
+    model_config = {"from_attributes": True}
+
+
+# ── Sources ───────────────────────────────────────────────────────────────────
 class ChatSource(BaseModel):
     document_id: str
     title: str
