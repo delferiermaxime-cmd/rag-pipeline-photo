@@ -2,6 +2,8 @@ FROM python:3.11-slim
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc libpq-dev curl libgl1 libglib2.0-0 libgomp1 \
+    tesseract-ocr tesseract-ocr-fra tesseract-ocr-eng \
+    poppler-utils \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
@@ -10,7 +12,12 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Pré-télécharge les modèles Docling au build (pas au premier upload)
-RUN python -c "from docling.document_converter import DocumentConverter; DocumentConverter()" || true
+# Le || true évite d'échouer si le réseau est lent
+RUN python -c "\
+from docling.document_converter import DocumentConverter; \
+from docling.datamodel.base_models import InputFormat; \
+dc = DocumentConverter(); \
+print('Docling OK')" || echo "Docling preload skipped"
 
 COPY app/ ./app/
 
