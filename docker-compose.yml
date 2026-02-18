@@ -28,7 +28,8 @@ services:
       test: ["CMD-SHELL", "curl -sf http://localhost:6333/readyz || exit 1"]
       interval: 10s
       timeout: 5s
-      retries: 5
+      retries: 10
+      start_period: 30s        # donne du temps au container pour initialiser
 
   # ── Ollama ───────────────────────────────────────────────────────────────────
   ollama:
@@ -40,7 +41,8 @@ services:
       test: ["CMD-SHELL", "curl -sf http://localhost:11434/api/tags || exit 1"]
       interval: 15s
       timeout: 10s
-      retries: 10
+      retries: 15               # plus de retries pour attendre les modèles
+      start_period: 30s         # laisse Ollama s’initialiser tranquillement
 
   # ── Ollama Init (télécharge les modèles au premier démarrage) ────────────────
   ollama-init:
@@ -65,16 +67,14 @@ services:
       qdrant:
         condition: service_healthy
       ollama:
-        condition: service_healthy   # FIX : backend attend qu'Ollama soit healthy
+        condition: service_healthy
     environment:
       DATABASE_URL: postgresql+asyncpg://raguser:ragpassword@postgres:5432/ragdb
       QDRANT_HOST: qdrant
       QDRANT_PORT: 6333
       OLLAMA_BASE_URL: http://ollama:11434
-      # FIX : ${VAR:?msg} fait échouer docker compose si SECRET_KEY absent du .env
       SECRET_KEY: "${SECRET_KEY}"
       DEBUG: "false"
-      # Tunnel SSH : ajoutez votre port local, ex: http://localhost:8080
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost,http://localhost:3000,http://localhost:8080}
     volumes:
       - uploads_tmp:/tmp/uploads
@@ -83,6 +83,7 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+      start_period: 10s
 
   # ── Frontend ─────────────────────────────────────────────────────────────────
   frontend:
@@ -94,12 +95,12 @@ services:
       backend:
         condition: service_healthy
     environment:
-      NEXT_PUBLIC_API_URL: ""   # Vide = nginx proxy (correct)
+      NEXT_PUBLIC_API_URL: ""
     healthcheck:
       test: ["CMD-SHELL", "curl -sf http://localhost:3000 || exit 1"]
       interval: 15s
       timeout: 5s
-      retries: 5
+      retries: 10
       start_period: 30s         # Next.js compile au premier démarrage
 
   # ── Nginx ────────────────────────────────────────────────────────────────────
