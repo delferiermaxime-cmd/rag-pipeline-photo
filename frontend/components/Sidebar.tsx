@@ -8,6 +8,7 @@ const nav = [
   { href: '/chat', icon: MessageSquare, label: 'Chat' },
   { href: '/upload', icon: Upload, label: 'Upload' },
   { href: '/documents', icon: FileText, label: 'Documents' },
+  { href: '/settings', icon: Settings, label: 'Paramètres' },
 ]
 
 interface Props {
