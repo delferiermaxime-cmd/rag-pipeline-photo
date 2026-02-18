@@ -34,8 +34,6 @@ if _DOCLING_OK:
         ".odt":      InputFormat.DOCX,
         ".html":     InputFormat.HTML,
         ".htm":      InputFormat.HTML,
-        ".md":       InputFormat.MD,
-        ".txt":      InputFormat.MD,
         ".epub":     InputFormat.HTML,
     }
 else:
