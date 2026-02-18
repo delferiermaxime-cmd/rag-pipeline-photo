@@ -13,7 +13,7 @@ try:
     from docling.document_converter import DocumentConverter, PdfFormatOption
     from docling.datamodel.base_models import InputFormat
     from docling.datamodel.pipeline_options import PdfPipelineOptions
-    from docling.backend.pypdfium2_backend import PyPdfium2DocumentBackend
+    from docling.backend.pypdfium2_backend import PyPdfiumDocumentBackend
     _DOCLING_OK = True
     logger.info("Docling chargé avec succès")
 except Exception as e:
@@ -42,7 +42,6 @@ if _DOCLING_OK:
         ".epub":     InputFormat.HTML,
     }
 else:
-    # Fallback formats sans Docling
     EXT_TO_FORMAT = {
         ".txt": "txt", ".md": "txt", ".csv": "txt",
         ".html": "txt", ".htm": "txt",
@@ -59,7 +58,7 @@ def _build_converter(ext: str) -> "DocumentConverter":
             format_options={
                 InputFormat.PDF: PdfFormatOption(
                     pipeline_options=opts,
-                    backend=PyPdfium2DocumentBackend,
+                    backend=PyPdfiumDocumentBackend,
                 )
             }
         )
@@ -115,8 +114,6 @@ def _chunk_markdown(markdown: str, filename: str, max_chars: int = 3000) -> List
     return chunks or [{"page": 1, "title": filename, "content": "(vide)", "chunk_index": 0}]
 
 
-# ── Fallback parsers sans Docling ─────────────────────────────────────────────
-
 def _fallback_parse(file_bytes: bytes, filename: str) -> str:
     ext = Path(filename).suffix.lower()
 
@@ -130,33 +127,22 @@ def _fallback_parse(file_bytes: bytes, filename: str) -> str:
 
     if ext == ".pdf":
         try:
-            import pypdf
-            import io
+            import pypdf, io
             reader = pypdf.PdfReader(io.BytesIO(file_bytes))
-            pages = []
-            for page in reader.pages:
-                text = page.extract_text()
-                if text:
-                    pages.append(text)
+            pages = [p.extract_text() for p in reader.pages if p.extract_text()]
             return "\n\n".join(pages) if pages else "(PDF vide ou non lisible)"
         except Exception as e:
-            logger.warning(f"pypdf fallback échoué: {e}")
             try:
                 import pypdfium2 as pdfium
                 pdf = pdfium.PdfDocument(file_bytes)
-                pages = []
-                for i in range(len(pdf)):
-                    page = pdf[i]
-                    textpage = page.get_textpage()
-                    pages.append(textpage.get_text_range())
+                pages = [pdf[i].get_textpage().get_text_range() for i in range(len(pdf))]
                 return "\n\n".join(pages)
             except Exception as e2:
                 raise RuntimeError(f"Impossible de lire le PDF: {e2}")
 
     if ext == ".docx":
         try:
-            import docx
-            import io
+            import docx, io
             doc = docx.Document(io.BytesIO(file_bytes))
             return "\n\n".join(p.text for p in doc.paragraphs if p.text.strip())
         except Exception as e:
@@ -169,11 +155,8 @@ def _convert_sync(tmp_path: str, ext: str, filename: str) -> List[Dict[str, Any]
     converter = _build_converter(ext)
     result = converter.convert(tmp_path)
     markdown: str = result.document.export_to_markdown()
-
     if not markdown or not markdown.strip():
-        logger.warning(f"[Docling] Markdown vide pour '{filename}'")
-        return [{"page": 1, "title": filename, "content": "(document vide ou non lisible)", "chunk_index": 0}]
-
+        return [{"page": 1, "title": filename, "content": "(document vide)", "chunk_index": 0}]
     return _chunk_markdown(markdown, filename)
 
 
@@ -181,18 +164,15 @@ async def convert_document(file_bytes: bytes, filename: str) -> List[Dict[str, A
     ext = Path(filename).suffix.lower()
 
     if _DOCLING_OK and ext in EXT_TO_FORMAT:
-        # Utiliser Docling
         logger.info(f"[Docling] Conversion '{filename}' ({len(file_bytes):,} bytes)")
         tmp_path = None
         try:
             with tempfile.NamedTemporaryFile(suffix=ext, delete=False, dir="/tmp") as tmp:
                 tmp.write(file_bytes)
                 tmp_path = tmp.name
-
             chunks = await asyncio.to_thread(_convert_sync, tmp_path, ext, filename)
             logger.info(f"[Docling] {len(chunks)} chunks produits pour '{filename}'")
             return chunks
-
         except Exception as e:
             logger.error(f"[Docling] Erreur '{filename}': {e}", exc_info=True)
             raise RuntimeError(f"Erreur Docling pour '{filename}': {e}")
@@ -203,7 +183,6 @@ async def convert_document(file_bytes: bytes, filename: str) -> List[Dict[str, A
                 except OSError:
                     pass
     else:
-        # Fallback sans Docling
         logger.info(f"[Fallback] Conversion '{filename}'")
         try:
             text = _fallback_parse(file_bytes, filename)
