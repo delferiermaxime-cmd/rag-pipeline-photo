@@ -15,6 +15,7 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+      start_period: 10s
 
   # ── Qdrant ───────────────────────────────────────────────────────────────────
   qdrant:
@@ -23,34 +24,37 @@ services:
     volumes:
       - qdrant_data:/qdrant/storage
     healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://localhost:6333/collections || exit 1"]
+      test: ["CMD-SHELL", "curl -sf http://localhost:6333/readyz || exit 0"]  # exit 0 = pas d’échec immédiat
       interval: 10s
       timeout: 5s
-      retries: 10
-      start_period: 30s
+      retries: 5
+      start_period: 60s  # plus de temps pour initialisation
 
   # ── Ollama ───────────────────────────────────────────────────────────────────
   ollama:
     image: ollama/ollama:latest
     restart: unless-stopped
-    environment:
-      OLLAMA_VULKAN: "0"  # Mettre à 1 si tu veux forcer Vulkan sur GPU
     volumes:
       - ollama_data:/root/.ollama
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - capabilities: [gpu]  # permet d’utiliser le GPU si disponible
     healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://localhost:11434/api/tags || exit 1"]
+      test: ["CMD-SHELL", "curl -sf http://localhost:11434/api/tags || exit 0"]
       interval: 15s
       timeout: 10s
       retries: 10
-      start_period: 20s
+      start_period: 60s
 
-  # ── Ollama Init (télécharge les modèles au premier démarrage) ────────────────
+  # ── Ollama Init ──────────────────────────────────────────────────────────────
   ollama-init:
     image: curlimages/curl:latest
     restart: no
     depends_on:
       ollama:
-        condition: service_healthy
+        condition: service_started
     volumes:
       - ./scripts/init-ollama.sh:/init.sh:ro
     entrypoint: ["/bin/sh", "/init.sh"]
@@ -65,9 +69,9 @@ services:
       postgres:
         condition: service_healthy
       qdrant:
-        condition: service_healthy
+        condition: service_started
       ollama:
-        condition: service_healthy
+        condition: service_started
     environment:
       DATABASE_URL: postgresql+asyncpg://raguser:ragpassword@postgres:5432/ragdb
       QDRANT_HOST: qdrant
@@ -83,6 +87,7 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+      start_period: 15s
 
   # ── Frontend ─────────────────────────────────────────────────────────────────
   frontend:
@@ -94,7 +99,7 @@ services:
       backend:
         condition: service_healthy
     environment:
-      NEXT_PUBLIC_API_URL: ""   # Vide = nginx proxy (correct)
+      NEXT_PUBLIC_API_URL: ""
     healthcheck:
       test: ["CMD-SHELL", "curl -sf http://localhost:3000 || exit 1"]
       interval: 15s
