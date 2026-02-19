@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
+import base64
 import json
 import logging
+import os
 from typing import AsyncGenerator, Any, Dict, List, Optional
 
 import httpx
@@ -8,6 +10,7 @@ import httpx
 from app.config import settings
 from app.services.embedding_service import get_embedding
 from app.services.qdrant_service import search_chunks
+from app.services.docling_service import IMAGES_DIR
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +40,45 @@ def _build_prompt(question: str, chunks: List[Dict[str, Any]], context_max_chars
     return f"CONTEXTE:\n{chr(10).join(parts)}\n\nQUESTION: {question}"
 
 
+def _load_image_base64(filename: str) -> Optional[str]:
+    """Charge une image depuis le disque et la retourne en base64."""
+    filepath = os.path.join(IMAGES_DIR, filename)
+    if not os.path.exists(filepath):
+        return None
+    try:
+        with open(filepath, "rb") as f:
+            return base64.b64encode(f.read()).decode("utf-8")
+    except Exception as e:
+        logger.warning(f"Impossible de charger l'image {filename}: {e}")
+        return None
+
+
+async def _model_supports_vision(model: str, http_client: httpx.AsyncClient) -> bool:
+    """Vérifie si le modèle supporte la vision via l'API Ollama."""
+    try:
+        response = await http_client.get(
+            f"{settings.OLLAMA_BASE_URL}/api/show",
+            params={"name": model},
+            timeout=httpx.Timeout(10.0),
+        )
+        if response.status_code != 200:
+            return False
+        data = response.json()
+        # Ollama expose les capacités dans modelinfo ou capabilities
+        capabilities = data.get("capabilities", [])
+        if "vision" in capabilities:
+            return True
+        # Fallback : vérifier dans les détails du modèle
+        details = data.get("details", {})
+        families = details.get("families", [])
+        # gemma3, llava, moondream, minicpm-v supportent la vision
+        vision_families = {"clip", "vision", "llava", "gemma3", "moondream", "minicpm"}
+        return any(f.lower() in vision_families for f in families)
+    except Exception as e:
+        logger.warning(f"Impossible de vérifier les capacités du modèle {model}: {e}")
+        return False
+
+
 async def stream_rag_response(
     question: str,
     user_id: str,
@@ -51,14 +93,14 @@ async def stream_rag_response(
     context_max_chars: Optional[int] = 12000,
 ) -> AsyncGenerator[str, None]:
 
-    # 1. Embedding
+    # 1. Embedding de la question
     try:
         query_embedding = await get_embedding(question, http_client)
     except Exception as e:
         yield _sse({"type": "error", "error": f"Erreur embedding: {e}"})
         return
 
-    # 2. Recherche Qdrant avec top_k depuis settings ou paramètre
+    # 2. Recherche Qdrant
     effective_top_k = top_k if top_k is not None else settings.TOP_K
     try:
         chunks = await search_chunks(
@@ -72,7 +114,7 @@ async def stream_rag_response(
         yield _sse({"type": "error", "error": f"Erreur recherche: {e}"})
         return
 
-    # 3. Sources
+    # 3. Sources avec image_filenames
     sources = [
         {
             "document_id": c.get("document_id", ""),
@@ -80,6 +122,7 @@ async def stream_rag_response(
             "page": c.get("page", ""),
             "content": (c.get("content", "")[:200] + "...") if len(c.get("content", "")) > 200 else c.get("content", ""),
             "score": round(c.get("score", 0.0), 3),
+            "image_filenames": c.get("image_filenames", []),
         }
         for c in chunks
     ]
@@ -90,16 +133,48 @@ async def stream_rag_response(
         yield _sse({"type": "done"})
         return
 
-    # 4. Construction messages avec historique
+    # 4. Vérifier si le modèle supporte la vision
+    supports_vision = await _model_supports_vision(model, http_client)
+    logger.info(f"Modèle {model} vision: {supports_vision}")
+
+    # 5. Construire le prompt texte
     prompt = _build_prompt(question, chunks, context_max_chars=context_max_chars if context_max_chars else 12000)
+
+    # 6. Construire les messages
     messages = [{"role": "system", "content": RAG_SYSTEM_PROMPT}]
     if history:
         for msg in history[-10:]:
             messages.append({"role": msg["role"], "content": msg["content"]})
-    messages.append({"role": "user", "content": prompt})
 
-    # 5. Stream LLM avec paramètres utilisateur
-    logger.info(f"RAG: {len(chunks)} chunks, min_score={min_score}, context_max={context_max_chars}")
+    # 7. Message utilisateur — avec images si vision supportée
+    if supports_vision:
+        # Collecter les images uniques des chunks trouvés (max 3 pour ne pas surcharger)
+        image_filenames = []
+        seen = set()
+        for c in chunks[:3]:
+            for fname in c.get("image_filenames", []):
+                if fname not in seen:
+                    image_filenames.append(fname)
+                    seen.add(fname)
+
+        if image_filenames:
+            # Format multimodal Ollama
+            user_content = [{"type": "text", "text": prompt}]
+            for fname in image_filenames[:3]:  # max 3 images
+                b64 = _load_image_base64(fname)
+                if b64:
+                    user_content.append({
+                        "type": "image_url",
+                        "image_url": {"url": f"data:image/png;base64,{b64}"}
+                    })
+            messages.append({"role": "user", "content": user_content})
+            logger.info(f"Vision activée : {len([c for c in user_content if c['type'] == 'image_url'])} images envoyées")
+        else:
+            messages.append({"role": "user", "content": prompt})
+    else:
+        messages.append({"role": "user", "content": prompt})
+
+    # 8. Stream LLM
     stream_timeout = httpx.Timeout(connect=10.0, read=None, write=30.0, pool=5.0)
     try:
         async with http_client.stream(
