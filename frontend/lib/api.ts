@@ -65,6 +65,12 @@ export async function listDocuments() {
   return res.json()
 }
 
+export async function getDocumentStatus(id: string) {
+  const res = await apiFetch(`/documents/${id}/status`)
+  if (!res.ok) throw new Error("Erreur statut document")
+  return res.json()
+}
+
 export async function deleteDocument(id: string) {
   const res = await apiFetch(`/documents/${id}`, { method: 'DELETE' })
   if (!res.ok) throw new Error('Erreur suppression')
@@ -102,7 +108,16 @@ export function streamChat(
   onError: (err: string) => void,
   onConversationId: (id: string) => void,
   conversationId?: string,
-  settings?: { temperature?: number; topK?: number; maxTokens?: number; minScore?: number; contextMaxChars?: number; systemPrompt?: string },
+  settings?: {
+    temperature?: number
+    topK?: number
+    maxTokens?: number
+    minScore?: number
+    contextMaxChars?: number
+    systemPrompt?: string
+  },
+  // FIX : document_ids maintenant transmis au backend pour le filtrage optionnel
+  documentIds?: string[],
 ): () => void {
   const token = getToken()
   const controller = new AbortController()
@@ -120,6 +135,8 @@ export function streamChat(
       min_score: settings?.minScore,
       context_max_chars: settings?.contextMaxChars,
       system_prompt: settings?.systemPrompt,
+      // FIX : envoi des document_ids si fournis (null = recherche dans tous les documents)
+      document_ids: documentIds && documentIds.length > 0 ? documentIds : null,
     }),
     signal: controller.signal,
   }).then(async (res) => {
@@ -151,9 +168,29 @@ export function streamChat(
   return () => controller.abort()
 }
 
-export interface Source { document_id: string; title: string; page: number | null; content: string; score: number; image_filenames: string[] }
-export interface Document { id: string; original_name: string; file_type: string; status: string; chunk_count: number; created_at: string; error_message?: string }
-export interface Conversation { id: string; title: string; created_at: string; updated_at: string }
+export interface Source {
+  document_id: string
+  title: string
+  page: number | null
+  content: string
+  score: number
+  image_filenames: string[]
+}
+export interface Document {
+  id: string
+  original_name: string
+  file_type: string
+  status: string
+  chunk_count: number
+  created_at: string
+  error_message?: string
+}
+export interface Conversation {
+  id: string
+  title: string
+  created_at: string
+  updated_at: string
+}
 export interface ConversationDetail extends Conversation {
   messages: { id: string; role: string; content: string; created_at: string }[]
 }
