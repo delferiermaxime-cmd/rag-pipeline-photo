@@ -1,141 +1,443 @@
 'use client'
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useRouter } from 'next/navigation'
-import { Save, RotateCcw } from 'lucide-react'
+import { Send, Paperclip, X, Trash2, Plus, ChevronLeft, Filter, FileText, CheckSquare, Square } from 'lucide-react'
 import Sidebar from '@/components/Sidebar'
-import { getMe } from '@/lib/api'
-import styles from './settings.module.css'
+import {
+  getMe, getModels, streamChat, listConversations, getConversation, deleteConversation,
+  listDocuments,
+  type Source, type Conversation, type Document,
+} from '@/lib/api'
+import styles from './chat.module.css'
 
-const DEFAULT_PROMPT = ``
-
-const DEFAULTS = {
-  temperature: 0.1,
-  topK: 5,
-  maxTokens: 1024,
-  minScore: 0.0,
-  contextMaxChars: 12000,
-  systemPrompt: DEFAULT_PROMPT,
+interface Message {
+  role: 'user' | 'assistant'
+  content: string
+  sources?: Source[]
 }
 
-export default function SettingsPage() {
+function getSettings() {
+  if (typeof window === 'undefined') return { temperature: 0.1, topK: 5, maxTokens: 1024, minScore: 0.0, contextMaxChars: 12000, systemPrompt: '' }
+  try {
+    const saved = localStorage.getItem('rag_settings')
+    return saved ? JSON.parse(saved) : { temperature: 0.1, topK: 5, maxTokens: 1024, minScore: 0.0, contextMaxChars: 12000, systemPrompt: '' }
+  } catch { return { temperature: 0.1, topK: 5, maxTokens: 1024, minScore: 0.0, contextMaxChars: 12000, systemPrompt: '' } }
+}
+
+async function parseFileLocally(file: File): Promise<string> {
+  const ext = file.name.split('.').pop()?.toLowerCase() || ''
+  if (['txt', 'md', 'csv', 'html', 'htm'].includes(ext)) {
+    return await file.text()
+  }
+  return `[Fichier: ${file.name} - ${(file.size / 1024).toFixed(1)} KB]`
+}
+
+export default function ChatPage() {
   const router = useRouter()
   const [user, setUser] = useState<any>(null)
-  const [s, setS] = useState(DEFAULTS)
-  const [saved, setSaved] = useState(false)
+  const [models, setModels] = useState<string[]>([])
+  const [model, setModel] = useState('')
+  const [messages, setMessages] = useState<Message[]>([])
+  const [input, setInput] = useState('')
+  const [streaming, setStreaming] = useState(false)
+  const [showSources, setShowSources] = useState<number | null>(null)
+  const [conversations, setConversations] = useState<Conversation[]>([])
+  const [activeConvId, setActiveConvId] = useState<string | undefined>(undefined)
+  const [showHistory, setShowHistory] = useState(false)
+  const [inlineFile, setInlineFile] = useState<{ name: string; content: string } | null>(null)
+  const [loadingFile, setLoadingFile] = useState(false)
+
+  // FIX : sélection de documents pour filtrer la recherche Qdrant
+  const [documents, setDocuments] = useState<Document[]>([])
+  const [selectedDocIds, setSelectedDocIds] = useState<Set<string>>(new Set())
+  const [showDocFilter, setShowDocFilter] = useState(false)
+  const [loadingDocs, setLoadingDocs] = useState(false)
+
+  const bottomRef = useRef<HTMLDivElement>(null)
+  const cancelRef = useRef<(() => void) | null>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
     getMe().then(setUser).catch(() => router.push('/login'))
-    try {
-      const raw = localStorage.getItem('rag_settings')
-      if (raw) setS({ ...DEFAULTS, ...JSON.parse(raw) })
-    } catch {}
+    getModels().then(data => {
+      setModels(data.models)
+      setModel(data.default || data.models[0])
+    }).catch(() => {})
+    loadConversations()
+    loadDocuments()
   }, [router])
 
-  function handleSave() {
-    localStorage.setItem('rag_settings', JSON.stringify(s))
-    setSaved(true)
-    setTimeout(() => setSaved(false), 2000)
+  useEffect(() => {
+    bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
+  }, [messages])
+
+  async function loadConversations() {
+    try {
+      const convs = await listConversations()
+      setConversations(convs)
+    } catch {}
   }
 
-  function handleReset() {
-    setS(DEFAULTS)
-    localStorage.setItem('rag_settings', JSON.stringify(DEFAULTS))
-    setSaved(true)
-    setTimeout(() => setSaved(false), 2000)
+  async function loadDocuments() {
+    setLoadingDocs(true)
+    try {
+      const docs = await listDocuments()
+      // Garde uniquement les documents prêts (indexés dans Qdrant)
+      setDocuments(docs.filter((d: Document) => d.status === 'ready'))
+    } catch {}
+    finally { setLoadingDocs(false) }
+  }
+
+  async function loadConversation(id: string) {
+    try {
+      const conv = await getConversation(id)
+      setMessages(conv.messages.map(m => ({ role: m.role as 'user' | 'assistant', content: m.content })))
+      setActiveConvId(id)
+      setShowHistory(false)
+      setInlineFile(null)
+    } catch {}
+  }
+
+  function newConversation() {
+    setMessages([])
+    setActiveConvId(undefined)
+    setInlineFile(null)
+    setShowHistory(false)
+  }
+
+  async function handleDeleteConv(id: string, e: React.MouseEvent) {
+    e.stopPropagation()
+    await deleteConversation(id)
+    if (activeConvId === id) newConversation()
+    loadConversations()
+  }
+
+  async function handleInlineFile(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    if (!file) return
+    setLoadingFile(true)
+    try {
+      const content = await parseFileLocally(file)
+      setInlineFile({ name: file.name, content })
+    } catch {
+      alert('Impossible de lire le fichier')
+    } finally {
+      setLoadingFile(false)
+      e.target.value = ''
+    }
+  }
+
+  // Toggle sélection d'un document
+  function toggleDocSelection(docId: string) {
+    setSelectedDocIds(prev => {
+      const next = new Set(prev)
+      if (next.has(docId)) {
+        next.delete(docId)
+      } else {
+        next.add(docId)
+      }
+      return next
+    })
+  }
+
+  // Sélectionner / désélectionner tous
+  function toggleAllDocs() {
+    if (selectedDocIds.size === documents.length) {
+      setSelectedDocIds(new Set())
+    } else {
+      setSelectedDocIds(new Set(documents.map(d => d.id)))
+    }
+  }
+
+  function handleSend() {
+    if (!input.trim() || streaming) return
+    const question = input.trim()
+    const settings = getSettings()
+    setInput('')
+
+    const fullQuestion = inlineFile
+      ? `[Document joint: ${inlineFile.name}]\n${inlineFile.content.slice(0, 8000)}\n\n---\n${question}`
+      : question
+
+    const userMsg: Message = { role: 'user', content: question }
+    const assistantMsg: Message = { role: 'assistant', content: '' }
+    setMessages(prev => [...prev, userMsg, assistantMsg])
+    setStreaming(true)
+
+    // FIX : passe les document_ids sélectionnés — si aucun sélectionné, null = cherche partout
+    const docIds = selectedDocIds.size > 0 ? Array.from(selectedDocIds) : undefined
+
+    cancelRef.current = streamChat(
+      fullQuestion,
+      model,
+      (token) => {
+        setMessages(prev => {
+          const updated = [...prev]
+          updated[updated.length - 1] = {
+            ...updated[updated.length - 1],
+            content: updated[updated.length - 1].content + token,
+          }
+          return updated
+        })
+      },
+      (s) => {
+        setMessages(prev => {
+          const updated = [...prev]
+          updated[updated.length - 1] = { ...updated[updated.length - 1], sources: s }
+          return updated
+        })
+      },
+      () => {
+        setStreaming(false)
+        loadConversations()
+      },
+      (err) => {
+        setMessages(prev => {
+          const updated = [...prev]
+          updated[updated.length - 1] = {
+            ...updated[updated.length - 1],
+            content: `Erreur: ${err}`,
+          }
+          return updated
+        })
+        setStreaming(false)
+      },
+      (id) => setActiveConvId(id),
+      activeConvId,
+      settings,
+      docIds,
+    )
+  }
+
+  function handleKeyDown(e: React.KeyboardEvent) {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault()
+      handleSend()
+    }
   }
 
   return (
     <div className={styles.layout}>
-      <Sidebar username={user?.username} />
+      <Sidebar username={user?.username} model={model} onModelChange={setModel} models={models} />
+
+      {/* ── Panneau historique ── */}
+      {showHistory && (
+        <div className={styles.historyPanel}>
+          <div className={styles.historyHeader}>
+            <span>Historique</span>
+            <button onClick={() => setShowHistory(false)} className="ghost" style={{ padding: 4 }}>
+              <X size={16} />
+            </button>
+          </div>
+          <button onClick={newConversation} className={`primary ${styles.newConvBtn}`}>
+            <Plus size={14} /> Nouvelle conversation
+          </button>
+          <div className={styles.convList}>
+            {conversations.length === 0 && <p className={styles.emptyHistory}>Aucun historique</p>}
+            {conversations.map(conv => (
+              <div
+                key={conv.id}
+                className={`${styles.convItem} ${conv.id === activeConvId ? styles.activeConv : ''}`}
+                onClick={() => loadConversation(conv.id)}
+              >
+                <span className={styles.convTitle}>{conv.title}</span>
+                <button className="ghost" onClick={(e) => handleDeleteConv(conv.id, e)} style={{ padding: 2, opacity: 0.5 }}>
+                  <Trash2 size={12} />
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* ── Panneau filtre documents ── */}
+      {showDocFilter && (
+        <div className={styles.docFilterPanel}>
+          <div className={styles.historyHeader}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <Filter size={14} />
+              <span>Filtrer par document</span>
+            </div>
+            <button onClick={() => setShowDocFilter(false)} className="ghost" style={{ padding: 4 }}>
+              <X size={16} />
+            </button>
+          </div>
+
+          {/* Sélectionner tout / aucun */}
+          <div className={styles.docFilterActions}>
+            <button className="ghost" onClick={toggleAllDocs} style={{ fontSize: 12, padding: '4px 10px' }}>
+              {selectedDocIds.size === documents.length && documents.length > 0 ? 'Tout désélectionner' : 'Tout sélectionner'}
+            </button>
+            {selectedDocIds.size > 0 && (
+              <span className={styles.docFilterCount}>
+                {selectedDocIds.size} / {documents.length}
+              </span>
+            )}
+          </div>
+
+          <div className={styles.docFilterInfo}>
+            {selectedDocIds.size === 0
+              ? '🌐 Recherche dans tous les documents'
+              : `🔍 Filtré sur ${selectedDocIds.size} document${selectedDocIds.size > 1 ? 's' : ''}`
+            }
+          </div>
+
+          <div className={styles.docList}>
+            {loadingDocs && <p className={styles.emptyHistory}>Chargement...</p>}
+            {!loadingDocs && documents.length === 0 && (
+              <p className={styles.emptyHistory}>Aucun document indexé</p>
+            )}
+            {documents.map(doc => {
+              const isSelected = selectedDocIds.has(doc.id)
+              return (
+                <div
+                  key={doc.id}
+                  className={`${styles.docItem} ${isSelected ? styles.docItemSelected : ''}`}
+                  onClick={() => toggleDocSelection(doc.id)}
+                >
+                  <div className={styles.docItemIcon}>
+                    {isSelected
+                      ? <CheckSquare size={15} style={{ color: 'var(--accent)' }} />
+                      : <Square size={15} style={{ color: 'var(--text-muted)' }} />
+                    }
+                  </div>
+                  <div className={styles.docItemInfo}>
+                    <span className={styles.docItemName}>{doc.original_name}</span>
+                    <span className={styles.docItemMeta}>
+                      {doc.file_type.toUpperCase()} · {doc.chunk_count} chunks
+                    </span>
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      )}
+
       <main className={styles.main}>
-        <div className={styles.header}>
-          <h1>Paramètres</h1>
-          <p>Configuration du LLM et de la recherche vectorielle</p>
+        <div className={styles.toolbar}>
+          <button className={`ghost ${styles.historyBtn}`} onClick={() => { setShowHistory(!showHistory); setShowDocFilter(false) }}>
+            <ChevronLeft size={16} style={{ transform: showHistory ? 'rotate(180deg)' : 'none', transition: '0.2s' }} />
+            Historique
+          </button>
+          <button className="ghost" onClick={newConversation}>
+            <Plus size={16} /> Nouvelle
+          </button>
+
+          {/* FIX : bouton filtre documents */}
+          <button
+            className={`ghost ${styles.filterBtn} ${selectedDocIds.size > 0 ? styles.filterBtnActive : ''}`}
+            onClick={() => { const opening = !showDocFilter; setShowDocFilter(opening); setShowHistory(false); if (opening) loadDocuments() }}
+            title="Filtrer par document"
+          >
+            <Filter size={16} />
+            {selectedDocIds.size > 0
+              ? `${selectedDocIds.size} doc${selectedDocIds.size > 1 ? 's' : ''}`
+              : 'Tous les docs'
+            }
+          </button>
         </div>
 
-        <div className={styles.sections}>
-          <div className={styles.section}>
-            <h2 className={styles.sectionTitle}>Prompt système</h2>
-            <p className={styles.sectionDesc}>Instructions données au LLM avant chaque réponse.</p>
-            <textarea
-              className={styles.textarea}
-              value={s.systemPrompt}
-              onChange={e => setS(prev => ({ ...prev, systemPrompt: e.target.value }))}
-              rows={6}
-            />
-          </div>
-
-          <div className={styles.section}>
-            <h2 className={styles.sectionTitle}>Paramètres LLM</h2>
-
-            <div className={styles.field}>
-              <label className={styles.label}>
-                Température <span className={styles.value}>{s.temperature}</span>
-              </label>
-              <p className={styles.fieldDesc}>0 = réponses déterministes · 1 = plus créatif</p>
-              <input type="range" min={0} max={1} step={0.05} value={s.temperature}
-                className={styles.range}
-                onChange={e => setS(prev => ({ ...prev, temperature: parseFloat(e.target.value) }))} />
-              <div className={styles.rangeLabels}><span>0</span><span>1</span></div>
+        <div className={styles.messages}>
+          {messages.length === 0 && (
+            <div className={styles.empty}>
+              <p>Posez une question sur vos documents</p>
+              <p style={{ fontSize: 13, opacity: 0.5, marginTop: 8 }}>
+                📎 pour joindre un fichier temporaire · 📁 Upload pour indexer dans la base
+              </p>
+              {selectedDocIds.size > 0 && (
+                <p style={{ fontSize: 12, marginTop: 12, color: 'var(--accent)', opacity: 0.8 }}>
+                  🔍 Filtré sur {selectedDocIds.size} document{selectedDocIds.size > 1 ? 's' : ''}
+                </p>
+              )}
             </div>
+          )}
 
-            <div className={styles.field}>
-              <label className={styles.label}>
-                Tokens max <span className={styles.value}>{s.maxTokens}</span>
-              </label>
-              <p className={styles.fieldDesc}>Longueur maximale de la réponse du LLM</p>
-              <input type="range" min={256} max={4096} step={128} value={s.maxTokens}
-                className={styles.range}
-                onChange={e => setS(prev => ({ ...prev, maxTokens: parseInt(e.target.value) }))} />
-              <div className={styles.rangeLabels}><span>256</span><span>4096</span></div>
+          {messages.map((msg, i) => (
+            <div key={i} className={`${styles.message} ${styles[msg.role]}`}>
+              <div className={styles.bubble}>
+                {msg.content || (msg.role === 'assistant' && streaming && i === messages.length - 1 ? (
+                  <div className="dot-pulse"><span /><span /><span /></div>
+                ) : null)}
+                {msg.role === 'assistant' && msg.content && (
+                  <div className={styles.cursor}>{streaming && i === messages.length - 1 ? '▋' : ''}</div>
+                )}
+              </div>
+
+              {msg.sources && msg.sources.length > 0 && (
+                <div className={styles.sourcesWrapper}>
+                  <button className={styles.sourcesToggle} onClick={() => setShowSources(showSources === i ? null : i)}>
+                    {showSources === i ? '▾' : '▸'} {msg.sources.length} source{msg.sources.length > 1 ? 's' : ''}
+                  </button>
+                  {showSources === i && (
+                    <div className={styles.sources}>
+                      {msg.sources.map((s, j) => (
+                        <div key={j} className={styles.source}>
+                          <div className={styles.sourceHeader}>
+                            <span className={styles.sourceTitle}>{s.title}</span>
+                            {s.page && <span className={styles.sourcePage}>p.{s.page}</span>}
+                            <span className={styles.sourceScore}>{(s.score * 100).toFixed(0)}%</span>
+                          </div>
+                          <p className={styles.sourceContent}>{s.content}</p>
+                          {s.image_filenames && s.image_filenames.length > 0 && (
+                            <div className={styles.sourceImages}>
+                              {s.image_filenames.map((fname, k) => (
+                                <img
+                                  key={k}
+                                  src={`/api/v1/documents/images/${fname}`}
+                                  alt={`Image ${k + 1} - ${s.title}`}
+                                  className={styles.sourceImage}
+                                  loading="lazy"
+                                  onError={e => { (e.target as HTMLImageElement).style.display = 'none' }}
+                                />
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
-          </div>
+          ))}
+          <div ref={bottomRef} />
+        </div>
 
-          <div className={styles.section}>
-            <h2 className={styles.sectionTitle}>Paramètres RAG</h2>
-
-            <div className={styles.field}>
-              <label className={styles.label}>
-                Chunks récupérés (TOP_K) <span className={styles.value}>{s.topK}</span>
-              </label>
-              <p className={styles.fieldDesc}>Nombre de passages extraits de la base vectorielle par question</p>
-              <input type="range" min={1} max={20} step={1} value={s.topK}
-                className={styles.range}
-                onChange={e => setS(prev => ({ ...prev, topK: parseInt(e.target.value) }))} />
-              <div className={styles.rangeLabels}><span>1</span><span>20</span></div>
-            </div>
-
-            <div className={styles.field}>
-              <label className={styles.label}>
-                Score de similarité minimum <span className={styles.value}>{s.minScore}</span>
-              </label>
-              <p className={styles.fieldDesc}>Seuil en dessous duquel les chunks sont ignorés (0 = tout accepter)</p>
-              <input type="range" min={0} max={1} step={0.05} value={s.minScore}
-                className={styles.range}
-                onChange={e => setS(prev => ({ ...prev, minScore: parseFloat(e.target.value) }))} />
-              <div className={styles.rangeLabels}><span>0</span><span>1</span></div>
-            </div>
-
-            <div className={styles.field}>
-              <label className={styles.label}>
-                Contexte max (caractères) <span className={styles.value}>{s.contextMaxChars.toLocaleString()}</span>
-              </label>
-              <p className={styles.fieldDesc}>Taille maximale du contexte envoyé au LLM</p>
-              <input type="range" min={2000} max={32000} step={1000} value={s.contextMaxChars}
-                className={styles.range}
-                onChange={e => setS(prev => ({ ...prev, contextMaxChars: parseInt(e.target.value) }))} />
-              <div className={styles.rangeLabels}><span>2k</span><span>32k</span></div>
-            </div>
-          </div>
-
-          <div className={styles.actions}>
-            <button onClick={handleReset} className="ghost" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-              <RotateCcw size={14} /> Réinitialiser
-            </button>
-            <button onClick={handleSave} className="primary" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-              <Save size={14} /> {saved ? '✓ Sauvegardé !' : 'Sauvegarder'}
+        {inlineFile && (
+          <div className={styles.inlineFile}>
+            <Paperclip size={12} />
+            <span>{inlineFile.name}</span>
+            <span style={{ opacity: 0.5, fontSize: 11 }}>(temporaire — non indexé)</span>
+            <button onClick={() => setInlineFile(null)} className="ghost" style={{ padding: 2 }}>
+              <X size={12} />
             </button>
           </div>
+        )}
+
+        <div className={styles.inputArea}>
+          <div className={styles.inputWrapper}>
+            <button onClick={() => fileInputRef.current?.click()} className="ghost"
+              title="Joindre un fichier temporaire" disabled={loadingFile || streaming} style={{ padding: '6px 8px' }}>
+              {loadingFile ? <span className="spinner" style={{ width: 16, height: 16 }} /> : <Paperclip size={16} />}
+            </button>
+            <input ref={fileInputRef} type="file" style={{ display: 'none' }}
+              accept=".txt,.md,.csv,.html,.htm" onChange={handleInlineFile} />
+            <textarea value={input} onChange={e => setInput(e.target.value)} onKeyDown={handleKeyDown}
+              placeholder="Posez une question… (Entrée pour envoyer)" rows={1}
+              className={styles.input} disabled={streaming} />
+            <button onClick={handleSend} disabled={!input.trim() || streaming} className={`primary ${styles.sendBtn}`}>
+              {streaming ? <span className="spinner" style={{ width: 16, height: 16 }} /> : <Send size={16} />}
+            </button>
+          </div>
+          <p className={styles.hint}>
+            Modèle: <strong>{model}</strong>
+            {selectedDocIds.size > 0 && (
+              <span style={{ marginLeft: 12, color: 'var(--accent)' }}>
+                · 🔍 {selectedDocIds.size} doc{selectedDocIds.size > 1 ? 's' : ''} sélectionné{selectedDocIds.size > 1 ? 's' : ''}
+              </span>
+            )}
+          </p>
         </div>
       </main>
     </div>
