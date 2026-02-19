@@ -11,13 +11,21 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Pré-télécharge les modèles Docling au build (pas au premier upload)
-# Le || true évite d'échouer si le réseau est lent
+# FIX preload Docling : on force le téléchargement des modèles ML au build
+# (layout detection, table structure, OCR) et pas au premier upload.
+# Sans ça, le premier upload sur un serveur frais prend 3-5 minutes
+# le temps que HuggingFace Hub télécharge les modèles (~500MB).
 RUN python -c "\
-from docling.document_converter import DocumentConverter; \
+from docling.document_converter import DocumentConverter, PdfFormatOption; \
 from docling.datamodel.base_models import InputFormat; \
-dc = DocumentConverter(); \
-print('Docling OK')" || echo "Docling preload skipped"
+from docling.datamodel.pipeline_options import PdfPipelineOptions; \
+from docling.backend.pypdfium2_backend import PyPdfiumDocumentBackend; \
+opts = PdfPipelineOptions(); \
+opts.do_ocr = True; \
+opts.do_table_structure = True; \
+dc = DocumentConverter(format_options={InputFormat.PDF: PdfFormatOption(pipeline_options=opts, backend=PyPdfiumDocumentBackend)}); \
+print('Docling models preloaded OK')" \
+|| echo "Docling preload skipped (réseau indisponible au build)"
 
 COPY app/ ./app/
 
