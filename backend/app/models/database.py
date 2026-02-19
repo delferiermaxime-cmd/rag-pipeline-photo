@@ -58,7 +58,21 @@ class Document(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     owner = relationship("User", back_populates="documents")
+    images = relationship("DocumentImage", back_populates="document", cascade="all, delete-orphan", order_by="DocumentImage.page")
 
+
+
+class DocumentImage(Base):
+    __tablename__ = "document_images"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    document_id = Column(UUID(as_uuid=True), ForeignKey("documents.id", ondelete="CASCADE"), nullable=False, index=True)
+    page = Column(Integer, nullable=False, default=1)
+    filename = Column(String(500), nullable=False)   # nom du fichier sur disque
+    mime_type = Column(String(50), default="image/png")
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    document = relationship("Document", back_populates="images")
 
 class Conversation(Base):
     __tablename__ = "conversations"
