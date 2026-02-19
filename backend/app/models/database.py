@@ -55,11 +55,18 @@ class Document(Base):
     status = Column(String(20), default="processing")
     chunk_count = Column(Integer, default=0)
     error_message = Column(Text, nullable=True)
+    # FIX progression : deux nouvelles colonnes pour le suivi du traitement
+    progress = Column(Integer, default=0)                    # 0-100%
+    status_detail = Column(String(500), nullable=True)       # message lisible par l'utilisateur
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     owner = relationship("User", back_populates="documents")
-    images = relationship("DocumentImage", back_populates="document", cascade="all, delete-orphan", order_by="DocumentImage.page")
-
+    images = relationship(
+        "DocumentImage",
+        back_populates="document",
+        cascade="all, delete-orphan",
+        order_by="DocumentImage.page"
+    )
 
 
 class DocumentImage(Base):
@@ -68,11 +75,12 @@ class DocumentImage(Base):
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     document_id = Column(UUID(as_uuid=True), ForeignKey("documents.id", ondelete="CASCADE"), nullable=False, index=True)
     page = Column(Integer, nullable=False, default=1)
-    filename = Column(String(500), nullable=False)   # nom du fichier sur disque
+    filename = Column(String(500), nullable=False)
     mime_type = Column(String(50), default="image/png")
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     document = relationship("Document", back_populates="images")
+
 
 class Conversation(Base):
     __tablename__ = "conversations"
@@ -84,7 +92,12 @@ class Conversation(Base):
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
     owner = relationship("User", back_populates="conversations")
-    messages = relationship("ChatMessage", back_populates="conversation", cascade="all, delete-orphan", order_by="ChatMessage.created_at")
+    messages = relationship(
+        "ChatMessage",
+        back_populates="conversation",
+        cascade="all, delete-orphan",
+        order_by="ChatMessage.created_at"
+    )
 
 
 class ChatMessage(Base):
@@ -92,7 +105,7 @@ class ChatMessage(Base):
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     conversation_id = Column(UUID(as_uuid=True), ForeignKey("conversations.id", ondelete="CASCADE"), nullable=False, index=True)
-    role = Column(String(20), nullable=False)  # "user" | "assistant"
+    role = Column(String(20), nullable=False)
     content = Column(Text, nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
