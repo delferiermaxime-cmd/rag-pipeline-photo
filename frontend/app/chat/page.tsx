@@ -16,11 +16,11 @@ interface Message {
 }
 
 function getSettings() {
-  if (typeof window === 'undefined') return { temperature: 0.1, topK: 5, maxTokens: 1024, systemPrompt: '' }
+  if (typeof window === 'undefined') return { temperature: 0.1, topK: 5, maxTokens: 1024, minScore: 0.3, contextMaxChars: 12000, systemPrompt: '' }
   try {
     const saved = localStorage.getItem('rag_settings')
-    return saved ? JSON.parse(saved) : { temperature: 0.1, topK: 5, maxTokens: 1024, systemPrompt: '' }
-  } catch { return { temperature: 0.1, topK: 5, maxTokens: 1024, systemPrompt: '' } }
+    return saved ? JSON.parse(saved) : { temperature: 0.1, topK: 5, maxTokens: 1024, minScore: 0.3, contextMaxChars: 12000, systemPrompt: '' }
+  } catch { return { temperature: 0.1, topK: 5, maxTokens: 1024, minScore: 0.3, contextMaxChars: 12000, systemPrompt: '' } }
 }
 
 async function parseFileLocally(file: File): Promise<string> {
@@ -257,7 +257,7 @@ export default function ChatPage() {
                                 <img
                                   key={k}
                                   src={`/api/v1/documents/images/${fname}`}
-                                  alt={`Image ${k + 1} — ${s.title}`}
+                                  alt={`Image ${k + 1} - ${s.title}`}
                                   className={styles.sourceImage}
                                   loading="lazy"
                                   onError={e => { (e.target as HTMLImageElement).style.display = 'none' }}
