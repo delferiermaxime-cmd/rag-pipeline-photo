@@ -6,13 +6,13 @@ import Sidebar from '@/components/Sidebar'
 import { getMe } from '@/lib/api'
 import styles from './settings.module.css'
 
-const DEFAULT_PROMPT = `Tu es un assistant intelligent. Tu as acces a des documents fournis dans le contexte.\n\nRegles :\n1. Si la reponse est dans les documents fournis, reponds en te basant sur eux et cite les sources.\n2. Si la reponse n'est pas dans les documents mais que tu la connais, reponds normalement.\n3. Sois precis et concis.`
+const DEFAULT_PROMPT = ``
 
 const DEFAULTS = {
   temperature: 0.1,
   topK: 5,
   maxTokens: 1024,
-  minScore: 0.3,
+  minScore: 0.0,
   contextMaxChars: 12000,
   systemPrompt: DEFAULT_PROMPT,
 }
@@ -49,14 +49,14 @@ export default function SettingsPage() {
       <Sidebar username={user?.username} />
       <main className={styles.main}>
         <div className={styles.header}>
-          <h1>Param&egrave;tres</h1>
+          <h1>Paramètres</h1>
           <p>Configuration du LLM et de la recherche vectorielle</p>
         </div>
 
         <div className={styles.sections}>
           <div className={styles.section}>
-            <h2 className={styles.sectionTitle}>Prompt syst&egrave;me</h2>
-            <p className={styles.sectionDesc}>Instructions donn&eacute;es au LLM avant chaque r&eacute;ponse.</p>
+            <h2 className={styles.sectionTitle}>Prompt système</h2>
+            <p className={styles.sectionDesc}>Instructions données au LLM avant chaque réponse.</p>
             <textarea
               className={styles.textarea}
               value={s.systemPrompt}
@@ -66,13 +66,13 @@ export default function SettingsPage() {
           </div>
 
           <div className={styles.section}>
-            <h2 className={styles.sectionTitle}>Param&egrave;tres LLM</h2>
+            <h2 className={styles.sectionTitle}>Paramètres LLM</h2>
 
             <div className={styles.field}>
               <label className={styles.label}>
-                Temp&eacute;rature <span className={styles.value}>{s.temperature}</span>
+                Température <span className={styles.value}>{s.temperature}</span>
               </label>
-              <p className={styles.fieldDesc}>0 = r&eacute;ponses d&eacute;terministes &middot; 1 = plus cr&eacute;atif</p>
+              <p className={styles.fieldDesc}>0 = réponses déterministes · 1 = plus créatif</p>
               <input type="range" min={0} max={1} step={0.05} value={s.temperature}
                 className={styles.range}
                 onChange={e => setS(prev => ({ ...prev, temperature: parseFloat(e.target.value) }))} />
@@ -83,7 +83,7 @@ export default function SettingsPage() {
               <label className={styles.label}>
                 Tokens max <span className={styles.value}>{s.maxTokens}</span>
               </label>
-              <p className={styles.fieldDesc}>Longueur maximale de la r&eacute;ponse du LLM</p>
+              <p className={styles.fieldDesc}>Longueur maximale de la réponse du LLM</p>
               <input type="range" min={256} max={4096} step={128} value={s.maxTokens}
                 className={styles.range}
                 onChange={e => setS(prev => ({ ...prev, maxTokens: parseInt(e.target.value) }))} />
@@ -92,11 +92,11 @@ export default function SettingsPage() {
           </div>
 
           <div className={styles.section}>
-            <h2 className={styles.sectionTitle}>Param&egrave;tres RAG</h2>
+            <h2 className={styles.sectionTitle}>Paramètres RAG</h2>
 
             <div className={styles.field}>
               <label className={styles.label}>
-                Chunks r&eacute;cup&eacute;r&eacute;s (TOP_K) <span className={styles.value}>{s.topK}</span>
+                Chunks récupérés (TOP_K) <span className={styles.value}>{s.topK}</span>
               </label>
               <p className={styles.fieldDesc}>Nombre de passages extraits de la base vectorielle par question</p>
               <input type="range" min={1} max={20} step={1} value={s.topK}
@@ -107,9 +107,9 @@ export default function SettingsPage() {
 
             <div className={styles.field}>
               <label className={styles.label}>
-                Score de similarit&eacute; minimum <span className={styles.value}>{s.minScore}</span>
+                Score de similarité minimum <span className={styles.value}>{s.minScore}</span>
               </label>
-              <p className={styles.fieldDesc}>Seuil en dessous duquel les chunks sont ignor&eacute;s (0 = tout accepter)</p>
+              <p className={styles.fieldDesc}>Seuil en dessous duquel les chunks sont ignorés (0 = tout accepter)</p>
               <input type="range" min={0} max={1} step={0.05} value={s.minScore}
                 className={styles.range}
                 onChange={e => setS(prev => ({ ...prev, minScore: parseFloat(e.target.value) }))} />
@@ -118,9 +118,9 @@ export default function SettingsPage() {
 
             <div className={styles.field}>
               <label className={styles.label}>
-                Contexte max (caract&egrave;res) <span className={styles.value}>{s.contextMaxChars.toLocaleString()}</span>
+                Contexte max (caractères) <span className={styles.value}>{s.contextMaxChars.toLocaleString()}</span>
               </label>
-              <p className={styles.fieldDesc}>Taille maximale du contexte envoy&eacute; au LLM</p>
+              <p className={styles.fieldDesc}>Taille maximale du contexte envoyé au LLM</p>
               <input type="range" min={2000} max={32000} step={1000} value={s.contextMaxChars}
                 className={styles.range}
                 onChange={e => setS(prev => ({ ...prev, contextMaxChars: parseInt(e.target.value) }))} />
@@ -130,10 +130,10 @@ export default function SettingsPage() {
 
           <div className={styles.actions}>
             <button onClick={handleReset} className="ghost" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-              <RotateCcw size={14} /> R&eacute;initialiser
+              <RotateCcw size={14} /> Réinitialiser
             </button>
             <button onClick={handleSave} className="primary" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-              <Save size={14} /> {saved ? '\u2713 Sauvegardd !' : 'Sauvegarder'}
+              <Save size={14} /> {saved ? '✓ Sauvegardé !' : 'Sauvegarder'}
             </button>
           </div>
         </div>
