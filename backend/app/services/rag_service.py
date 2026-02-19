@@ -24,16 +24,10 @@ Règles STRICTES :
 4. Tu ne dois JAMAIS dire "les documents ne contiennent pas cette information" ou "je ne peux pas répondre" si la réponse existe dans tes connaissances générales.
 5. Sois précis et concis."""
 
-# Seuil de score minimum pour considérer un chunk comme pertinent
-# En dessous de ce seuil, les chunks sont retournés comme sources mais
-# le prompt indique au LLM de ne pas s'y fier
 _MIN_RELEVANT_SCORE = 0.45
 
-# ── Cache vision par modèle ──────────────────────────────────────────────────
-# FIX : évite d'appeler /api/show à chaque message pour le même modèle
-# Structure : { model_name: { "supports": bool, "ts": float } }
 _vision_cache: Dict[str, Dict] = {}
-_VISION_CACHE_TTL = 300  # 5 minutes — au cas où le modèle change
+_VISION_CACHE_TTL = 300
 
 
 def _sse(data: dict) -> str:
@@ -67,10 +61,6 @@ def _load_image_base64(filename: str) -> Optional[str]:
 
 
 async def _check_vision_support(model: str, http_client: httpx.AsyncClient) -> bool:
-    """
-    FIX cache : vérifie si le modèle supporte la vision via /api/show d'Ollama.
-    Résultat mis en cache 5 minutes pour ne pas appeler /api/show à chaque message.
-    """
     now = time.time()
     cached = _vision_cache.get(model)
     if cached and (now - cached["ts"]) < _VISION_CACHE_TTL:
@@ -93,8 +83,6 @@ async def _check_vision_support(model: str, http_client: httpx.AsyncClient) -> b
         return supports
     except Exception as e:
         logger.debug(f"Impossible de vérifier la vision pour {model}: {e}")
-        # En cas d'erreur, on assume pas de vision mais on ne cache pas
-        # pour retenter au prochain message
         return False
 
 
@@ -104,23 +92,9 @@ async def _condense_question(
     http_client: httpx.AsyncClient,
     model: str,
 ) -> str:
-    """
-    FIX query condensation : si la question fait référence à des éléments
-    de la conversation précédente ("et le suivant ?", "parle-moi de ça"),
-    on demande au LLM de la reformuler en question autonome avant de l'embedder.
-
-    Exemples :
-      Histoire : "Parle-moi de l'Art. 12"
-      Question : "Et le suivant ?"
-      → Condensée : "Quel est le contenu de l'Article 13 de la Constitution belge ?"
-
-    Si la question est déjà autonome, le LLM la retourne telle quelle.
-    """
     if not history:
         return question
 
-    # On ne condense que si la question est courte ou contient des références
-    # contextuelles — évite un appel LLM inutile sur les questions longues et autonomes
     ref_indicators = ["et ", "aussi", "le suivant", "précédent", "celui", "celle",
                       "ce point", "ça", "cela", "il ", "elle ", "ils ", "elles ",
                       "même", "encore", "suite", "après", "avant", "pareil"]
@@ -130,10 +104,9 @@ async def _condense_question(
     if not needs_condensation:
         return question
 
-    # Construire le mini-prompt de condensation
     history_text = "\n".join(
         f"{m['role'].upper()}: {m['content'][:200]}"
-        for m in history[-6:]  # 3 échanges max pour rester léger
+        for m in history[-6:]
     )
     condensation_prompt = f"""Voici l'historique d'une conversation :
 {history_text}
@@ -179,9 +152,59 @@ async def stream_rag_response(
     min_score: Optional[float] = 0.3,
     context_max_chars: Optional[int] = 12000,
     system_prompt: Optional[str] = None,
+    skip_rag: bool = False,  # NOUVEAU : si True, bypass total de Qdrant
 ) -> AsyncGenerator[str, None]:
 
-    # 1. Condensation de la question si nécessaire (référence à l'historique)
+    # Mode sans RAG — on envoie directement la question au LLM sans chercher dans Qdrant
+    if skip_rag:
+        yield _sse({"type": "sources", "sources": []})
+        prompt = question
+        effective_prompt = system_prompt if system_prompt and system_prompt.strip() else RAG_SYSTEM_PROMPT
+        messages = [{"role": "system", "content": effective_prompt}]
+        if history:
+            for msg in history[-10:]:
+                messages.append({"role": msg["role"], "content": msg["content"]})
+        messages.append({"role": "user", "content": prompt})
+
+        stream_timeout = httpx.Timeout(connect=10.0, read=None, write=30.0, pool=5.0)
+        try:
+            async with http_client.stream(
+                "POST",
+                f"{settings.OLLAMA_BASE_URL}/api/chat",
+                json={
+                    "model": model,
+                    "messages": messages,
+                    "stream": True,
+                    "options": {
+                        "temperature": temperature if temperature is not None else 0.1,
+                        "num_predict": max_tokens if max_tokens is not None else 1024,
+                    },
+                },
+                timeout=stream_timeout,
+            ) as response:
+                response.raise_for_status()
+                async for line in response.aiter_lines():
+                    if not line:
+                        continue
+                    try:
+                        data = json.loads(line)
+                        if data.get("done"):
+                            yield _sse({"type": "done"})
+                            break
+                        token = data.get("message", {}).get("content", "")
+                        if token:
+                            yield _sse({"type": "token", "token": token})
+                    except json.JSONDecodeError:
+                        continue
+        except httpx.TimeoutException:
+            yield _sse({"type": "error", "error": f"Timeout: le modèle {model} met trop de temps à répondre"})
+        except Exception as e:
+            logger.error(f"Erreur streaming LLM (skip_rag): {e}")
+            yield _sse({"type": "error", "error": str(e)})
+        return
+
+    # Mode normal avec RAG
+    # 1. Condensation de la question si nécessaire
     search_question = question
     if history:
         try:
@@ -189,14 +212,14 @@ async def stream_rag_response(
         except Exception as e:
             logger.warning(f"Condensation ignorée : {e}")
 
-    # 2. Embedding de la question (condensée ou originale)
+    # 2. Embedding
     try:
         query_embedding = await get_embedding(search_question, http_client)
     except Exception as e:
         yield _sse({"type": "error", "error": f"Erreur embedding: {e}"})
         return
 
-    # 3. Recherche Qdrant — à chaque message, avec la question condensée
+    # 3. Recherche Qdrant
     effective_top_k = top_k if top_k is not None else settings.TOP_K
     try:
         chunks = await search_chunks(
@@ -224,39 +247,35 @@ async def stream_rag_response(
     ]
     yield _sse({"type": "sources", "sources": sources})
 
-    # 5. Vision : vérification cachée (pas d'appel HTTP si déjà connu)
+    # 5. Vision
     supports_vision = await _check_vision_support(model, http_client)
 
-    # 6. Prompt texte — on distingue chunks pertinents vs chunks non pertinents
+    # 6. Prompt
     relevant_chunks = [c for c in chunks if c.get("score", 0) >= _MIN_RELEVANT_SCORE]
 
     if relevant_chunks:
-        # Des chunks pertinents existent → on les inclut dans le contexte
         prompt = _build_prompt(
-            question,  # question originale pour le LLM (pas la condensée)
+            question,
             relevant_chunks,
             context_max_chars=context_max_chars if context_max_chars else 12000
         )
     elif chunks:
-        # Qdrant a retourné des chunks mais aucun n'est assez pertinent
-        # → on demande explicitement au LLM d'utiliser ses connaissances générales
         prompt = (
             f"Les documents disponibles ne contiennent pas d'information pertinente "
             f"pour cette question. Réponds depuis tes connaissances générales.\n\n"
             f"QUESTION : {question}"
         )
     else:
-        # Aucun chunk retourné du tout
         prompt = f"Aucun document n'est disponible. Réponds depuis tes connaissances générales.\n\nQUESTION : {question}"
 
-    # 7. Messages — historique complet envoyé au LLM à chaque fois
+    # 7. Messages
     effective_prompt = system_prompt if system_prompt and system_prompt.strip() else RAG_SYSTEM_PROMPT
     messages = [{"role": "system", "content": effective_prompt}]
     if history:
         for msg in history[-10:]:
             messages.append({"role": msg["role"], "content": msg["content"]})
 
-    # 8. Message utilisateur avec images si vision supportée (uniquement sur chunks pertinents)
+    # 8. Images si vision supportée
     if supports_vision and relevant_chunks:
         image_filenames = []
         seen = set()
