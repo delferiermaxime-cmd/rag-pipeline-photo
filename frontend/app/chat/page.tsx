@@ -16,11 +16,11 @@ interface Message {
 }
 
 function getSettings() {
-  if (typeof window === 'undefined') return { temperature: 0.1, topK: 5, maxTokens: 1024, minScore: 0.3, contextMaxChars: 12000, systemPrompt: '' }
+  if (typeof window === 'undefined') return { temperature: 0.1, topK: 5, maxTokens: 1024, minScore: 0.0, contextMaxChars: 12000, systemPrompt: '' }
   try {
     const saved = localStorage.getItem('rag_settings')
-    return saved ? JSON.parse(saved) : { temperature: 0.1, topK: 5, maxTokens: 1024, minScore: 0.3, contextMaxChars: 12000, systemPrompt: '' }
-  } catch { return { temperature: 0.1, topK: 5, maxTokens: 1024, minScore: 0.3, contextMaxChars: 12000, systemPrompt: '' } }
+    return saved ? JSON.parse(saved) : { temperature: 0.1, topK: 5, maxTokens: 1024, minScore: 0.0, contextMaxChars: 12000, systemPrompt: '' }
+  } catch { return { temperature: 0.1, topK: 5, maxTokens: 1024, minScore: 0.0, contextMaxChars: 12000, systemPrompt: '' } }
 }
 
 async function parseFileLocally(file: File): Promise<string> {
