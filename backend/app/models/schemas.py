@@ -20,12 +20,26 @@ class Token(BaseModel):
     token_type: str = "bearer"
 
 class UserOut(BaseModel):
-    id: UUID; email: str; username: str; role: str; is_active: bool; created_at: datetime
+    id: UUID
+    email: str
+    username: str
+    role: str
+    is_active: bool
+    created_at: datetime
     model_config = {"from_attributes": True}
 
 class DocumentOut(BaseModel):
-    id: UUID; filename: str; original_name: str; file_type: str; status: str
-    chunk_count: int; error_message: Optional[str]; created_at: datetime
+    id: UUID
+    filename: str
+    original_name: str
+    file_type: str
+    status: str
+    chunk_count: int
+    error_message: Optional[str]
+    # FIX progression : exposées dans l'API pour que le frontend affiche la barre
+    progress: int = 0
+    status_detail: Optional[str] = None
+    created_at: datetime
     model_config = {"from_attributes": True}
 
 class ChatMessageRequest(BaseModel):
@@ -40,20 +54,34 @@ class ChatMessageRequest(BaseModel):
     context_max_chars: Optional[int] = 12000
     system_prompt: Optional[str] = None
 
-ChatMessage = ChatMessageRequest
+# FIX : suppression de "ChatMessage = ChatMessageRequest"
+# Cette ligne écrasait silencieusement le modèle SQLAlchemy ChatMessage
 
 class MessageOut(BaseModel):
-    id: UUID; role: str; content: str; created_at: datetime
+    id: UUID
+    role: str
+    content: str
+    created_at: datetime
     model_config = {"from_attributes": True}
 
 class ConversationOut(BaseModel):
-    id: UUID; title: str; created_at: datetime; updated_at: datetime
+    id: UUID
+    title: str
+    created_at: datetime
+    updated_at: datetime
     model_config = {"from_attributes": True}
 
 class ConversationDetail(BaseModel):
-    id: UUID; title: str; created_at: datetime; updated_at: datetime
+    id: UUID
+    title: str
+    created_at: datetime
+    updated_at: datetime
     messages: List[MessageOut] = []
     model_config = {"from_attributes": True}
 
 class ChatSource(BaseModel):
-    document_id: str; title: str; page: Optional[int]; content: str; score: float
+    document_id: str
+    title: str
+    page: Optional[int]
+    content: str
+    score: float
