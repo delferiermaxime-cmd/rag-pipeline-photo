@@ -67,7 +67,7 @@ export async function listDocuments() {
 
 export async function getDocumentStatus(id: string) {
   const res = await apiFetch(`/documents/${id}/status`)
-  if (!res.ok) throw new Error("Erreur statut document")
+  if (!res.ok) throw new Error('Erreur statut document')
   return res.json()
 }
 
@@ -116,7 +116,6 @@ export function streamChat(
     contextMaxChars?: number
     systemPrompt?: string
   },
-  // FIX : document_ids maintenant transmis au backend pour le filtrage optionnel
   documentIds?: string[],
 ): () => void {
   const token = getToken()
@@ -135,7 +134,6 @@ export function streamChat(
       min_score: settings?.minScore,
       context_max_chars: settings?.contextMaxChars,
       system_prompt: settings?.systemPrompt,
-      // FIX : envoi des document_ids si fournis (null = recherche dans tous les documents)
       document_ids: documentIds && documentIds.length > 0 ? documentIds : null,
     }),
     signal: controller.signal,
@@ -176,21 +174,26 @@ export interface Source {
   score: number
   image_filenames: string[]
 }
+
 export interface Document {
   id: string
   original_name: string
   file_type: string
   status: string
   chunk_count: number
+  progress: number
+  status_detail: string | null
   created_at: string
   error_message?: string
 }
+
 export interface Conversation {
   id: string
   title: string
   created_at: string
   updated_at: string
 }
+
 export interface ConversationDetail extends Conversation {
   messages: { id: string; role: string; content: string; created_at: string }[]
 }
