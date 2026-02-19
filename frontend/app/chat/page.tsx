@@ -251,6 +251,20 @@ export default function ChatPage() {
                             <span className={styles.sourceScore}>{(s.score * 100).toFixed(0)}%</span>
                           </div>
                           <p className={styles.sourceContent}>{s.content}</p>
+                          {s.image_filenames && s.image_filenames.length > 0 && (
+                            <div className={styles.sourceImages}>
+                              {s.image_filenames.map((fname, k) => (
+                                <img
+                                  key={k}
+                                  src={`/api/v1/documents/images/${fname}`}
+                                  alt={`Image ${k + 1} — ${s.title}`}
+                                  className={styles.sourceImage}
+                                  loading="lazy"
+                                  onError={e => { (e.target as HTMLImageElement).style.display = 'none' }}
+                                />
+                              ))}
+                            </div>
+                          )}
                         </div>
                       ))}
                     </div>
