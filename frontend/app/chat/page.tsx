@@ -1,9 +1,9 @@
 'use client'
 import { useState, useEffect, useRef } from 'react'
+import { useRouter } from 'next/navigation'
+import { Send, Paperclip, X, Trash2, Plus, ChevronLeft, Filter, CheckSquare, Square, ChevronDown, ChevronUp } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import { useRouter } from 'next/navigation'
-import { Send, Paperclip, X, Trash2, Plus, ChevronLeft, Filter, FileText, CheckSquare, Square } from 'lucide-react'
 import Sidebar from '@/components/Sidebar'
 import {
   getMe, getModels, streamChat, listConversations, getConversation, deleteConversation,
@@ -43,17 +43,18 @@ export default function ChatPage() {
   const [input, setInput] = useState('')
   const [streaming, setStreaming] = useState(false)
   const [showSources, setShowSources] = useState<number | null>(null)
+  const [expandedChunks, setExpandedChunks] = useState<Record<string, boolean>>({}) // msgIdx-srcIdx
   const [conversations, setConversations] = useState<Conversation[]>([])
   const [activeConvId, setActiveConvId] = useState<string | undefined>(undefined)
   const [showHistory, setShowHistory] = useState(false)
   const [inlineFile, setInlineFile] = useState<{ name: string; content: string } | null>(null)
   const [loadingFile, setLoadingFile] = useState(false)
 
-  // FIX : sélection de documents pour filtrer la recherche Qdrant
   const [documents, setDocuments] = useState<Document[]>([])
   const [selectedDocIds, setSelectedDocIds] = useState<Set<string>>(new Set())
   const [showDocFilter, setShowDocFilter] = useState(false)
   const [loadingDocs, setLoadingDocs] = useState(false)
+  const [skipRag, setSkipRag] = useState(false)
 
   const bottomRef = useRef<HTMLDivElement>(null)
   const cancelRef = useRef<(() => void) | null>(null)
@@ -74,17 +75,13 @@ export default function ChatPage() {
   }, [messages])
 
   async function loadConversations() {
-    try {
-      const convs = await listConversations()
-      setConversations(convs)
-    } catch {}
+    try { setConversations(await listConversations()) } catch {}
   }
 
   async function loadDocuments() {
     setLoadingDocs(true)
     try {
       const docs = await listDocuments()
-      // Garde uniquement les documents prêts (indexés dans Qdrant)
       setDocuments(docs.filter((d: Document) => d.status === 'ready'))
     } catch {}
     finally { setLoadingDocs(false) }
@@ -121,34 +118,27 @@ export default function ChatPage() {
     try {
       const content = await parseFileLocally(file)
       setInlineFile({ name: file.name, content })
-    } catch {
-      alert('Impossible de lire le fichier')
-    } finally {
-      setLoadingFile(false)
-      e.target.value = ''
-    }
+    } catch { alert('Impossible de lire le fichier') }
+    finally { setLoadingFile(false); e.target.value = '' }
   }
 
-  // Toggle sélection d'un document
   function toggleDocSelection(docId: string) {
     setSelectedDocIds(prev => {
       const next = new Set(prev)
-      if (next.has(docId)) {
-        next.delete(docId)
-      } else {
-        next.add(docId)
-      }
+      if (next.has(docId)) next.delete(docId)
+      else next.add(docId)
       return next
     })
   }
 
-  // Sélectionner / désélectionner tous
   function toggleAllDocs() {
-    if (selectedDocIds.size === documents.length) {
-      setSelectedDocIds(new Set())
-    } else {
-      setSelectedDocIds(new Set(documents.map(d => d.id)))
-    }
+    if (selectedDocIds.size === documents.length) setSelectedDocIds(new Set())
+    else setSelectedDocIds(new Set(documents.map(d => d.id)))
+  }
+
+  function toggleChunk(msgIdx: number, srcIdx: number) {
+    const key = `${msgIdx}-${srcIdx}`
+    setExpandedChunks(prev => ({ ...prev, [key]: !prev[key] }))
   }
 
   function handleSend() {
@@ -166,19 +156,14 @@ export default function ChatPage() {
     setMessages(prev => [...prev, userMsg, assistantMsg])
     setStreaming(true)
 
-    // FIX : passe les document_ids sélectionnés — si aucun sélectionné, null = cherche partout
-    const docIds = selectedDocIds.size > 0 ? Array.from(selectedDocIds) : undefined
+    const docIds = !skipRag && selectedDocIds.size > 0 ? Array.from(selectedDocIds) : undefined
 
     cancelRef.current = streamChat(
-      fullQuestion,
-      model,
+      fullQuestion, model,
       (token) => {
         setMessages(prev => {
           const updated = [...prev]
-          updated[updated.length - 1] = {
-            ...updated[updated.length - 1],
-            content: updated[updated.length - 1].content + token,
-          }
+          updated[updated.length - 1] = { ...updated[updated.length - 1], content: updated[updated.length - 1].content + token }
           return updated
         })
       },
@@ -189,17 +174,11 @@ export default function ChatPage() {
           return updated
         })
       },
-      () => {
-        setStreaming(false)
-        loadConversations()
-      },
+      () => { setStreaming(false); loadConversations() },
       (err) => {
         setMessages(prev => {
           const updated = [...prev]
-          updated[updated.length - 1] = {
-            ...updated[updated.length - 1],
-            content: `Erreur: ${err}`,
-          }
+          updated[updated.length - 1] = { ...updated[updated.length - 1], content: `Erreur: ${err}` }
           return updated
         })
         setStreaming(false)
@@ -208,14 +187,12 @@ export default function ChatPage() {
       activeConvId,
       settings,
       docIds,
+      skipRag,
     )
   }
 
   function handleKeyDown(e: React.KeyboardEvent) {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault()
-      handleSend()
-    }
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend() }
   }
 
   return (
@@ -227,25 +204,15 @@ export default function ChatPage() {
         <div className={styles.historyPanel}>
           <div className={styles.historyHeader}>
             <span>Historique</span>
-            <button onClick={() => setShowHistory(false)} className="ghost" style={{ padding: 4 }}>
-              <X size={16} />
-            </button>
+            <button onClick={() => setShowHistory(false)} className="ghost" style={{ padding: 4 }}><X size={16} /></button>
           </div>
-          <button onClick={newConversation} className={`primary ${styles.newConvBtn}`}>
-            <Plus size={14} /> Nouvelle conversation
-          </button>
+          <button onClick={newConversation} className={`primary ${styles.newConvBtn}`}><Plus size={14} /> Nouvelle conversation</button>
           <div className={styles.convList}>
             {conversations.length === 0 && <p className={styles.emptyHistory}>Aucun historique</p>}
             {conversations.map(conv => (
-              <div
-                key={conv.id}
-                className={`${styles.convItem} ${conv.id === activeConvId ? styles.activeConv : ''}`}
-                onClick={() => loadConversation(conv.id)}
-              >
+              <div key={conv.id} className={`${styles.convItem} ${conv.id === activeConvId ? styles.activeConv : ''}`} onClick={() => loadConversation(conv.id)}>
                 <span className={styles.convTitle}>{conv.title}</span>
-                <button className="ghost" onClick={(e) => handleDeleteConv(conv.id, e)} style={{ padding: 2, opacity: 0.5 }}>
-                  <Trash2 size={12} />
-                </button>
+                <button className="ghost" onClick={(e) => handleDeleteConv(conv.id, e)} style={{ padding: 2, opacity: 0.5 }}><Trash2 size={12} /></button>
               </div>
             ))}
           </div>
@@ -260,54 +227,51 @@ export default function ChatPage() {
               <Filter size={14} />
               <span>Filtrer par document</span>
             </div>
-            <button onClick={() => setShowDocFilter(false)} className="ghost" style={{ padding: 4 }}>
-              <X size={16} />
-            </button>
+            <button onClick={() => setShowDocFilter(false)} className="ghost" style={{ padding: 4 }}><X size={16} /></button>
           </div>
 
-          {/* Sélectionner tout / aucun */}
-          <div className={styles.docFilterActions}>
+          {/* Case "Sans base vectorielle" */}
+          <div
+            className={`${styles.docItem} ${skipRag ? styles.docItemSelected : ''}`}
+            onClick={() => { setSkipRag(!skipRag); if (!skipRag) setSelectedDocIds(new Set()) }}
+            style={{ borderBottom: '1px solid var(--border)', marginBottom: 8, paddingBottom: 8 }}
+          >
+            <div className={styles.docItemIcon}>
+              {skipRag ? <CheckSquare size={15} style={{ color: 'var(--accent)' }} /> : <Square size={15} style={{ color: 'var(--text-muted)' }} />}
+            </div>
+            <div className={styles.docItemInfo}>
+              <span className={styles.docItemName}>🚫 Sans base vectorielle</span>
+              <span className={styles.docItemMeta}>Répond depuis ses connaissances générales uniquement</span>
+            </div>
+          </div>
+
+          {/* Sélectionner tout */}
+          <div className={styles.docFilterActions} style={{ opacity: skipRag ? 0.4 : 1, pointerEvents: skipRag ? 'none' : 'auto' }}>
             <button className="ghost" onClick={toggleAllDocs} style={{ fontSize: 12, padding: '4px 10px' }}>
               {selectedDocIds.size === documents.length && documents.length > 0 ? 'Tout désélectionner' : 'Tout sélectionner'}
             </button>
-            {selectedDocIds.size > 0 && (
-              <span className={styles.docFilterCount}>
-                {selectedDocIds.size} / {documents.length}
-              </span>
-            )}
+            {selectedDocIds.size > 0 && <span className={styles.docFilterCount}>{selectedDocIds.size} / {documents.length}</span>}
           </div>
 
           <div className={styles.docFilterInfo}>
-            {selectedDocIds.size === 0
-              ? '🌐 Recherche dans tous les documents'
-              : `🔍 Filtré sur ${selectedDocIds.size} document${selectedDocIds.size > 1 ? 's' : ''}`
-            }
+            {skipRag ? '🚫 Qdrant désactivé — connaissances générales'
+              : selectedDocIds.size === 0 ? '🌐 Recherche dans tous les documents'
+              : `🔍 Filtré sur ${selectedDocIds.size} document${selectedDocIds.size > 1 ? 's' : ''}`}
           </div>
 
-          <div className={styles.docList}>
+          <div className={styles.docList} style={{ opacity: skipRag ? 0.4 : 1, pointerEvents: skipRag ? 'none' : 'auto' }}>
             {loadingDocs && <p className={styles.emptyHistory}>Chargement...</p>}
-            {!loadingDocs && documents.length === 0 && (
-              <p className={styles.emptyHistory}>Aucun document indexé</p>
-            )}
+            {!loadingDocs && documents.length === 0 && <p className={styles.emptyHistory}>Aucun document indexé</p>}
             {documents.map(doc => {
               const isSelected = selectedDocIds.has(doc.id)
               return (
-                <div
-                  key={doc.id}
-                  className={`${styles.docItem} ${isSelected ? styles.docItemSelected : ''}`}
-                  onClick={() => toggleDocSelection(doc.id)}
-                >
+                <div key={doc.id} className={`${styles.docItem} ${isSelected ? styles.docItemSelected : ''}`} onClick={() => toggleDocSelection(doc.id)}>
                   <div className={styles.docItemIcon}>
-                    {isSelected
-                      ? <CheckSquare size={15} style={{ color: 'var(--accent)' }} />
-                      : <Square size={15} style={{ color: 'var(--text-muted)' }} />
-                    }
+                    {isSelected ? <CheckSquare size={15} style={{ color: 'var(--accent)' }} /> : <Square size={15} style={{ color: 'var(--text-muted)' }} />}
                   </div>
                   <div className={styles.docItemInfo}>
                     <span className={styles.docItemName}>{doc.original_name}</span>
-                    <span className={styles.docItemMeta}>
-                      {doc.file_type.toUpperCase()} · {doc.chunk_count} chunks
-                    </span>
+                    <span className={styles.docItemMeta}>{doc.file_type.toUpperCase()} · {doc.chunk_count} chunks</span>
                   </div>
                 </div>
               )
@@ -322,21 +286,13 @@ export default function ChatPage() {
             <ChevronLeft size={16} style={{ transform: showHistory ? 'rotate(180deg)' : 'none', transition: '0.2s' }} />
             Historique
           </button>
-          <button className="ghost" onClick={newConversation}>
-            <Plus size={16} /> Nouvelle
-          </button>
-
-          {/* FIX : bouton filtre documents */}
+          <button className="ghost" onClick={newConversation}><Plus size={16} /> Nouvelle</button>
           <button
-            className={`ghost ${styles.filterBtn} ${selectedDocIds.size > 0 ? styles.filterBtnActive : ''}`}
+            className={`ghost ${styles.filterBtn} ${(selectedDocIds.size > 0 || skipRag) ? styles.filterBtnActive : ''}`}
             onClick={() => { const opening = !showDocFilter; setShowDocFilter(opening); setShowHistory(false); if (opening) loadDocuments() }}
-            title="Filtrer par document"
           >
             <Filter size={16} />
-            {selectedDocIds.size > 0
-              ? `${selectedDocIds.size} doc${selectedDocIds.size > 1 ? 's' : ''}`
-              : 'Tous les docs'
-            }
+            {skipRag ? '🚫 Sans RAG' : selectedDocIds.size > 0 ? `${selectedDocIds.size} doc${selectedDocIds.size > 1 ? 's' : ''}` : 'Tous les docs'}
           </button>
         </div>
 
@@ -344,14 +300,9 @@ export default function ChatPage() {
           {messages.length === 0 && (
             <div className={styles.empty}>
               <p>Posez une question sur vos documents</p>
-              <p style={{ fontSize: 13, opacity: 0.5, marginTop: 8 }}>
-                📎 pour joindre un fichier temporaire · 📁 Upload pour indexer dans la base
-              </p>
-              {selectedDocIds.size > 0 && (
-                <p style={{ fontSize: 12, marginTop: 12, color: 'var(--accent)', opacity: 0.8 }}>
-                  🔍 Filtré sur {selectedDocIds.size} document{selectedDocIds.size > 1 ? 's' : ''}
-                </p>
-              )}
+              <p style={{ fontSize: 13, opacity: 0.5, marginTop: 8 }}>📎 pour joindre un fichier temporaire · 📁 Upload pour indexer dans la base</p>
+              {skipRag && <p style={{ fontSize: 12, marginTop: 12, color: 'var(--error)', opacity: 0.8 }}>🚫 Base vectorielle désactivée</p>}
+              {!skipRag && selectedDocIds.size > 0 && <p style={{ fontSize: 12, marginTop: 12, color: 'var(--accent)', opacity: 0.8 }}>🔍 Filtré sur {selectedDocIds.size} document{selectedDocIds.size > 1 ? 's' : ''}</p>}
             </div>
           )}
 
@@ -361,9 +312,7 @@ export default function ChatPage() {
                 {msg.role === 'user' && msg.content}
                 {msg.role === 'assistant' && msg.content && (
                   <>
-                    <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                      {msg.content}
-                    </ReactMarkdown>
+                    <ReactMarkdown remarkPlugins={[remarkGfm]}>{msg.content}</ReactMarkdown>
                     <div className={styles.cursor}>{streaming && i === messages.length - 1 ? '▋' : ''}</div>
                   </>
                 )}
@@ -379,30 +328,41 @@ export default function ChatPage() {
                   </button>
                   {showSources === i && (
                     <div className={styles.sources}>
-                      {msg.sources.map((s, j) => (
-                        <div key={j} className={styles.source}>
-                          <div className={styles.sourceHeader}>
-                            <span className={styles.sourceTitle}>{s.title}</span>
-                            {s.page && <span className={styles.sourcePage}>p.{s.page}</span>}
-                            <span className={styles.sourceScore}>{(s.score * 100).toFixed(0)}%</span>
-                          </div>
-                          <p className={styles.sourceContent}>{s.content}</p>
-                          {s.image_filenames && s.image_filenames.length > 0 && (
-                            <div className={styles.sourceImages}>
-                              {s.image_filenames.map((fname, k) => (
-                                <img
-                                  key={k}
-                                  src={`/api/v1/documents/images/${fname}`}
-                                  alt={`Image ${k + 1} - ${s.title}`}
-                                  className={styles.sourceImage}
-                                  loading="lazy"
-                                  onError={e => { (e.target as HTMLImageElement).style.display = 'none' }}
-                                />
-                              ))}
+                      {msg.sources.map((s, j) => {
+                        const chunkKey = `${i}-${j}`
+                        const isExpanded = expandedChunks[chunkKey]
+                        const PREVIEW_LEN = 200
+                        const isLong = s.content.length > PREVIEW_LEN
+                        return (
+                          <div key={j} className={styles.source}>
+                            <div className={styles.sourceHeader}>
+                              <span className={styles.sourceTitle}>{s.title}</span>
+                              {s.page && <span className={styles.sourcePage}>p.{s.page}</span>}
+                              <span className={styles.sourceScore}>{(s.score * 100).toFixed(0)}%</span>
                             </div>
-                          )}
-                        </div>
-                      ))}
+                            <p className={styles.sourceContent}>
+                              {isLong && !isExpanded ? s.content.slice(0, PREVIEW_LEN) + '…' : s.content}
+                            </p>
+                            {isLong && (
+                              <button
+                                onClick={() => toggleChunk(i, j)}
+                                style={{ background: 'none', border: 'none', color: 'var(--accent)', fontSize: 11, cursor: 'pointer', padding: '2px 0', display: 'flex', alignItems: 'center', gap: 4 }}
+                              >
+                                {isExpanded ? <><ChevronUp size={11} /> Réduire</> : <><ChevronDown size={11} /> Voir le chunk complet</>}
+                              </button>
+                            )}
+                            {s.image_filenames && s.image_filenames.length > 0 && (
+                              <div className={styles.sourceImages}>
+                                {s.image_filenames.map((fname, k) => (
+                                  <img key={k} src={`/api/v1/documents/images/${fname}`} alt={`Image ${k + 1}`}
+                                    className={styles.sourceImage} loading="lazy"
+                                    onError={e => { (e.target as HTMLImageElement).style.display = 'none' }} />
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        )
+                      })}
                     </div>
                   )}
                 </div>
@@ -417,34 +377,26 @@ export default function ChatPage() {
             <Paperclip size={12} />
             <span>{inlineFile.name}</span>
             <span style={{ opacity: 0.5, fontSize: 11 }}>(temporaire — non indexé)</span>
-            <button onClick={() => setInlineFile(null)} className="ghost" style={{ padding: 2 }}>
-              <X size={12} />
-            </button>
+            <button onClick={() => setInlineFile(null)} className="ghost" style={{ padding: 2 }}><X size={12} /></button>
           </div>
         )}
 
         <div className={styles.inputArea}>
           <div className={styles.inputWrapper}>
-            <button onClick={() => fileInputRef.current?.click()} className="ghost"
-              title="Joindre un fichier temporaire" disabled={loadingFile || streaming} style={{ padding: '6px 8px' }}>
+            <button onClick={() => fileInputRef.current?.click()} className="ghost" title="Joindre un fichier temporaire" disabled={loadingFile || streaming} style={{ padding: '6px 8px' }}>
               {loadingFile ? <span className="spinner" style={{ width: 16, height: 16 }} /> : <Paperclip size={16} />}
             </button>
-            <input ref={fileInputRef} type="file" style={{ display: 'none' }}
-              accept=".txt,.md,.csv,.html,.htm" onChange={handleInlineFile} />
+            <input ref={fileInputRef} type="file" style={{ display: 'none' }} accept=".txt,.md,.csv,.html,.htm" onChange={handleInlineFile} />
             <textarea value={input} onChange={e => setInput(e.target.value)} onKeyDown={handleKeyDown}
-              placeholder="Posez une question… (Entrée pour envoyer)" rows={1}
-              className={styles.input} disabled={streaming} />
+              placeholder="Posez une question… (Entrée pour envoyer)" rows={1} className={styles.input} disabled={streaming} />
             <button onClick={handleSend} disabled={!input.trim() || streaming} className={`primary ${styles.sendBtn}`}>
               {streaming ? <span className="spinner" style={{ width: 16, height: 16 }} /> : <Send size={16} />}
             </button>
           </div>
           <p className={styles.hint}>
             Modèle: <strong>{model}</strong>
-            {selectedDocIds.size > 0 && (
-              <span style={{ marginLeft: 12, color: 'var(--accent)' }}>
-                · 🔍 {selectedDocIds.size} doc{selectedDocIds.size > 1 ? 's' : ''} sélectionné{selectedDocIds.size > 1 ? 's' : ''}
-              </span>
-            )}
+            {skipRag && <span style={{ marginLeft: 12, color: 'var(--error)' }}>· 🚫 Sans RAG</span>}
+            {!skipRag && selectedDocIds.size > 0 && <span style={{ marginLeft: 12, color: 'var(--accent)' }}>· 🔍 {selectedDocIds.size} doc{selectedDocIds.size > 1 ? 's' : ''} sélectionné{selectedDocIds.size > 1 ? 's' : ''}</span>}
           </p>
         </div>
       </main>
