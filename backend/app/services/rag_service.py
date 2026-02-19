@@ -14,11 +14,11 @@ from app.services.docling_service import IMAGES_DIR
 
 logger = logging.getLogger(__name__)
 
-RAG_SYSTEM_PROMPT = """Tu es un assistant intelligent. Tu as accès à des documents fournis dans le contexte.
+RAG_SYSTEM_PROMPT = """Tu es un assistant intelligent et polyvalent.
 
 Règles :
-1. Si la réponse est dans les documents fournis, réponds en te basant sur eux et cite les sources.
-2. Si la réponse n'est pas dans les documents mais que tu la connais, réponds normalement en précisant que l'information vient de tes connaissances générales et non des documents.
+1. Si des documents sont fournis dans le CONTEXTE, base ta réponse dessus et cite les sources.
+2. Si AUCUN document n'est fourni dans le contexte, réponds TOUJOURS à la question en utilisant tes connaissances générales. Tu NE DOIS JAMAIS répondre "Information non trouvée dans les documents fournis" quand aucun document n'est présent — réponds simplement et naturellement à la question.
 3. Sois précis et concis."""
 
 
@@ -138,7 +138,7 @@ async def stream_rag_response(
     if chunks:
         prompt = _build_prompt(question, chunks, context_max_chars=context_max_chars if context_max_chars else 12000)
     else:
-        prompt = question  # pas de contexte — le LLM répond depuis ses connaissances
+        prompt = f"Aucun document n'est disponible pour cette question. Réponds directement depuis tes connaissances générales.\n\nQUESTION : {question}"
 
     # 6. Construire les messages
     effective_prompt = system_prompt if system_prompt and system_prompt.strip() else RAG_SYSTEM_PROMPT
