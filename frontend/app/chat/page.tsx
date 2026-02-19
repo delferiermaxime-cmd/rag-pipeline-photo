@@ -1,5 +1,7 @@
 'use client'
 import { useState, useEffect, useRef } from 'react'
+import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
 import { useRouter } from 'next/navigation'
 import { Send, Paperclip, X, Trash2, Plus, ChevronLeft, Filter, FileText, CheckSquare, Square } from 'lucide-react'
 import Sidebar from '@/components/Sidebar'
@@ -47,11 +49,11 @@ export default function ChatPage() {
   const [inlineFile, setInlineFile] = useState<{ name: string; content: string } | null>(null)
   const [loadingFile, setLoadingFile] = useState(false)
 
+  // FIX : sélection de documents pour filtrer la recherche Qdrant
   const [documents, setDocuments] = useState<Document[]>([])
   const [selectedDocIds, setSelectedDocIds] = useState<Set<string>>(new Set())
   const [showDocFilter, setShowDocFilter] = useState(false)
   const [loadingDocs, setLoadingDocs] = useState(false)
-  const [skipRag, setSkipRag] = useState(false) // NOUVEAU : mode sans base vectorielle
 
   const bottomRef = useRef<HTMLDivElement>(null)
   const cancelRef = useRef<(() => void) | null>(null)
@@ -82,6 +84,7 @@ export default function ChatPage() {
     setLoadingDocs(true)
     try {
       const docs = await listDocuments()
+      // Garde uniquement les documents prêts (indexés dans Qdrant)
       setDocuments(docs.filter((d: Document) => d.status === 'ready'))
     } catch {}
     finally { setLoadingDocs(false) }
@@ -126,15 +129,20 @@ export default function ChatPage() {
     }
   }
 
+  // Toggle sélection d'un document
   function toggleDocSelection(docId: string) {
     setSelectedDocIds(prev => {
       const next = new Set(prev)
-      if (next.has(docId)) next.delete(docId)
-      else next.add(docId)
+      if (next.has(docId)) {
+        next.delete(docId)
+      } else {
+        next.add(docId)
+      }
       return next
     })
   }
 
+  // Sélectionner / désélectionner tous
   function toggleAllDocs() {
     if (selectedDocIds.size === documents.length) {
       setSelectedDocIds(new Set())
@@ -158,7 +166,8 @@ export default function ChatPage() {
     setMessages(prev => [...prev, userMsg, assistantMsg])
     setStreaming(true)
 
-    const docIds = !skipRag && selectedDocIds.size > 0 ? Array.from(selectedDocIds) : undefined
+    // FIX : passe les document_ids sélectionnés — si aucun sélectionné, null = cherche partout
+    const docIds = selectedDocIds.size > 0 ? Array.from(selectedDocIds) : undefined
 
     cancelRef.current = streamChat(
       fullQuestion,
@@ -199,7 +208,6 @@ export default function ChatPage() {
       activeConvId,
       settings,
       docIds,
-      skipRag,
     )
   }
 
@@ -257,29 +265,8 @@ export default function ChatPage() {
             </button>
           </div>
 
-          {/* NOUVEAU : case "Sans base vectorielle" */}
-          <div
-            className={`${styles.docItem} ${skipRag ? styles.docItemSelected : ''}`}
-            onClick={() => {
-              setSkipRag(!skipRag)
-              if (!skipRag) setSelectedDocIds(new Set()) // désélectionne les docs si on active skip_rag
-            }}
-            style={{ borderBottom: '1px solid var(--border)', marginBottom: 8, paddingBottom: 8 }}
-          >
-            <div className={styles.docItemIcon}>
-              {skipRag
-                ? <CheckSquare size={15} style={{ color: 'var(--accent)' }} />
-                : <Square size={15} style={{ color: 'var(--text-muted)' }} />
-              }
-            </div>
-            <div className={styles.docItemInfo}>
-              <span className={styles.docItemName}>🚫 Sans base vectorielle</span>
-              <span className={styles.docItemMeta}>Répond depuis ses connaissances générales uniquement</span>
-            </div>
-          </div>
-
-          {/* Sélectionner tout / aucun — désactivé si skip_rag */}
-          <div className={styles.docFilterActions} style={{ opacity: skipRag ? 0.4 : 1, pointerEvents: skipRag ? 'none' : 'auto' }}>
+          {/* Sélectionner tout / aucun */}
+          <div className={styles.docFilterActions}>
             <button className="ghost" onClick={toggleAllDocs} style={{ fontSize: 12, padding: '4px 10px' }}>
               {selectedDocIds.size === documents.length && documents.length > 0 ? 'Tout désélectionner' : 'Tout sélectionner'}
             </button>
@@ -291,16 +278,13 @@ export default function ChatPage() {
           </div>
 
           <div className={styles.docFilterInfo}>
-            {skipRag
-              ? '🚫 Qdrant désactivé — connaissances générales'
-              : selectedDocIds.size === 0
-                ? '🌐 Recherche dans tous les documents'
-                : `🔍 Filtré sur ${selectedDocIds.size} document${selectedDocIds.size > 1 ? 's' : ''}`
+            {selectedDocIds.size === 0
+              ? '🌐 Recherche dans tous les documents'
+              : `🔍 Filtré sur ${selectedDocIds.size} document${selectedDocIds.size > 1 ? 's' : ''}`
             }
           </div>
 
-          {/* Liste documents — désactivée si skip_rag */}
-          <div className={styles.docList} style={{ opacity: skipRag ? 0.4 : 1, pointerEvents: skipRag ? 'none' : 'auto' }}>
+          <div className={styles.docList}>
             {loadingDocs && <p className={styles.emptyHistory}>Chargement...</p>}
             {!loadingDocs && documents.length === 0 && (
               <p className={styles.emptyHistory}>Aucun document indexé</p>
@@ -342,17 +326,16 @@ export default function ChatPage() {
             <Plus size={16} /> Nouvelle
           </button>
 
+          {/* FIX : bouton filtre documents */}
           <button
-            className={`ghost ${styles.filterBtn} ${(selectedDocIds.size > 0 || skipRag) ? styles.filterBtnActive : ''}`}
+            className={`ghost ${styles.filterBtn} ${selectedDocIds.size > 0 ? styles.filterBtnActive : ''}`}
             onClick={() => { const opening = !showDocFilter; setShowDocFilter(opening); setShowHistory(false); if (opening) loadDocuments() }}
             title="Filtrer par document"
           >
             <Filter size={16} />
-            {skipRag
-              ? '🚫 Sans RAG'
-              : selectedDocIds.size > 0
-                ? `${selectedDocIds.size} doc${selectedDocIds.size > 1 ? 's' : ''}`
-                : 'Tous les docs'
+            {selectedDocIds.size > 0
+              ? `${selectedDocIds.size} doc${selectedDocIds.size > 1 ? 's' : ''}`
+              : 'Tous les docs'
             }
           </button>
         </div>
@@ -364,12 +347,7 @@ export default function ChatPage() {
               <p style={{ fontSize: 13, opacity: 0.5, marginTop: 8 }}>
                 📎 pour joindre un fichier temporaire · 📁 Upload pour indexer dans la base
               </p>
-              {skipRag && (
-                <p style={{ fontSize: 12, marginTop: 12, color: 'var(--error)', opacity: 0.8 }}>
-                  🚫 Base vectorielle désactivée — réponses depuis les connaissances générales uniquement
-                </p>
-              )}
-              {!skipRag && selectedDocIds.size > 0 && (
+              {selectedDocIds.size > 0 && (
                 <p style={{ fontSize: 12, marginTop: 12, color: 'var(--accent)', opacity: 0.8 }}>
                   🔍 Filtré sur {selectedDocIds.size} document{selectedDocIds.size > 1 ? 's' : ''}
                 </p>
@@ -379,12 +357,18 @@ export default function ChatPage() {
 
           {messages.map((msg, i) => (
             <div key={i} className={`${styles.message} ${styles[msg.role]}`}>
-              <div className={styles.bubble}>
-                {msg.content || (msg.role === 'assistant' && streaming && i === messages.length - 1 ? (
-                  <div className="dot-pulse"><span /><span /><span /></div>
-                ) : null)}
+              <div className={`${styles.bubble} ${msg.role === 'assistant' ? styles.markdown : ''}`}>
+                {msg.role === 'user' && msg.content}
                 {msg.role === 'assistant' && msg.content && (
-                  <div className={styles.cursor}>{streaming && i === messages.length - 1 ? '▋' : ''}</div>
+                  <>
+                    <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                      {msg.content}
+                    </ReactMarkdown>
+                    <div className={styles.cursor}>{streaming && i === messages.length - 1 ? '▋' : ''}</div>
+                  </>
+                )}
+                {msg.role === 'assistant' && !msg.content && streaming && i === messages.length - 1 && (
+                  <div className="dot-pulse"><span /><span /><span /></div>
                 )}
               </div>
 
@@ -456,12 +440,7 @@ export default function ChatPage() {
           </div>
           <p className={styles.hint}>
             Modèle: <strong>{model}</strong>
-            {skipRag && (
-              <span style={{ marginLeft: 12, color: 'var(--error)' }}>
-                · 🚫 Sans RAG
-              </span>
-            )}
-            {!skipRag && selectedDocIds.size > 0 && (
+            {selectedDocIds.size > 0 && (
               <span style={{ marginLeft: 12, color: 'var(--accent)' }}>
                 · 🔍 {selectedDocIds.size} doc{selectedDocIds.size > 1 ? 's' : ''} sélectionné{selectedDocIds.size > 1 ? 's' : ''}
               </span>
