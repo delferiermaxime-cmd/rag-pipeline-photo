@@ -81,7 +81,7 @@ git --version
 
 ```bash
 git clone https://github.com/delferiermaxime-cmd/rag-pipeline-photo.git
-cd rag-pipeline
+cd rag-pipeline-photo
 ```
 
 ### 2. Configurer les variables d'environnement
