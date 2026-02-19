@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 import asyncio
+import hashlib
 import logging
 import os
 from pathlib import Path
@@ -21,9 +22,7 @@ from app.services.qdrant_service import delete_document_chunks, ensure_collectio
 router = APIRouter(prefix="/documents", tags=["documents"])
 logger = logging.getLogger(__name__)
 
-# FIX timeout : Docling peut bloquer sur un PDF complexe/corrompu
-# On limite à 20 minutes maximum, après quoi le document passe en "error"
-_DOCLING_TIMEOUT = 20 * 60  # 20 minutes en secondes
+_DOCLING_TIMEOUT = 20 * 60  # 20 minutes
 
 
 @router.post("/upload", response_model=DocumentOut, status_code=202)
@@ -50,18 +49,33 @@ async def upload_document(
             f"Maximum : {settings.MAX_FILE_SIZE//1024//1024} MB"
         )
 
+    # Vérification doublon : même nom ET même contenu (hash SHA256)
+    content_hash = hashlib.sha256(content).hexdigest()
+    existing = await db.execute(
+        select(Document).where(
+            Document.original_name == file.filename,
+            Document.status != "error",
+        )
+    )
+    existing_doc = existing.scalars().first()
+    if existing_doc:
+        # Vérifie le hash si disponible, sinon rejette sur le nom seul
+        if not hasattr(existing_doc, 'content_hash') or existing_doc.content_hash == content_hash:
+            raise HTTPException(
+                409,
+                f"Ce document existe déjà : '{file.filename}' est déjà indexé dans la base."
+            )
+
     doc = Document(
         user_id=current_user.id,
         filename=f"{uuid4()}{suffix}",
         original_name=file.filename,
         file_type=suffix_clean,
         status="processing",
-        progress=0,           # FIX progression : démarre à 0%
+        progress=0,
         status_detail="En attente de traitement",
     )
     db.add(doc)
-
-    # FIX race condition : commit AVANT le background task
     await db.commit()
     await db.refresh(doc)
 
@@ -78,7 +92,6 @@ async def upload_document(
 
 
 async def _update_progress(document_id: str, progress: int, detail: str) -> None:
-    """Met à jour la progression du traitement en DB."""
     try:
         async with AsyncSessionLocal() as db:
             doc = await db.get(Document, UUID(document_id))
@@ -97,11 +110,6 @@ async def _process_document(
     user_id: str,
     http_client=None,
 ) -> None:
-    """
-    Pipeline complet : Docling → nettoyage → chunking → embedding → Qdrant.
-    FIX timeout : enveloppé dans asyncio.wait_for avec _DOCLING_TIMEOUT secondes.
-    FIX progression : mises à jour régulières visibles dans l'UI.
-    """
     try:
         await asyncio.wait_for(
             _run_pipeline(file_bytes, filename, document_id, user_id, http_client),
@@ -120,17 +128,14 @@ async def _run_pipeline(
     user_id: str,
     http_client=None,
 ) -> None:
-    """Pipeline effectif — séparé pour pouvoir appliquer le timeout dessus."""
     async with AsyncSessionLocal() as db:
         try:
-            # Étape 1 : Conversion Docling
             await _update_progress(document_id, 10, "Conversion du document en cours…")
             logger.info(f"[{document_id}] Début conversion Docling")
             chunks, images = await convert_document(file_bytes, filename, document_id)
             if not chunks:
                 raise ValueError("Aucun chunk produit après conversion")
 
-            # Étape 2 : Sauvegarde des images
             await _update_progress(document_id, 40, f"Document converti : {len(chunks)} sections extraites. Sauvegarde des images…")
             for img_data in images:
                 db_image = DocumentImage(
@@ -141,27 +146,21 @@ async def _run_pipeline(
                 )
                 db.add(db_image)
             await db.flush()
-            logger.info(f"[{document_id}] {len(images)} images sauvegardées")
 
-            # Enrichir les chunks avec les filenames d'images de leur page
             page_images: dict = {}
             for img_data in images:
                 page_images.setdefault(img_data["page"], []).append(img_data["filename"])
             for chunk in chunks:
                 chunk["image_filenames"] = page_images.get(chunk.get("page", 1), [])
 
-            # Étape 3 : Embedding
             await _update_progress(document_id, 60, f"Calcul des embeddings ({len(chunks)} chunks)…")
-            logger.info(f"[{document_id}] Embedding de {len(chunks)} chunks")
             texts = [c["content"] for c in chunks]
             embeddings = await get_embeddings(texts, http_client)
 
-            # Étape 4 : Indexation Qdrant
             await _update_progress(document_id, 85, "Indexation dans la base vectorielle…")
             await ensure_collection(len(embeddings[0]))
             count = await upsert_chunks(chunks, embeddings, user_id, document_id)
 
-            # Étape 5 : Finalisation
             doc = await db.get(Document, UUID(document_id))
             if doc:
                 doc.status = "ready"
@@ -178,7 +177,6 @@ async def _run_pipeline(
 
 
 async def _set_error(document_id: str, message: str) -> None:
-    """Passe le document en statut error."""
     try:
         async with AsyncSessionLocal() as db:
             doc = await db.get(Document, UUID(document_id))
@@ -201,17 +199,37 @@ async def list_documents(
     return result.scalars().all()
 
 
+@router.delete("/all", status_code=204)
+async def delete_all_documents(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Supprime tous les documents de la base."""
+    result = await db.execute(select(Document))
+    docs = result.scalars().all()
+    for doc in docs:
+        img_result = await db.execute(
+            select(DocumentImage).where(DocumentImage.document_id == doc.id)
+        )
+        images = img_result.scalars().all()
+        await delete_document_chunks(str(doc.id), str(current_user.id))
+        await db.delete(doc)
+        for img in images:
+            try:
+                filepath = os.path.join(IMAGES_DIR, img.filename)
+                if os.path.exists(filepath):
+                    os.unlink(filepath)
+            except OSError as e:
+                logger.warning(f"Impossible de supprimer l'image {img.filename}: {e}")
+    await db.commit()
+
+
 @router.get("/{document_id}/status", response_model=DocumentOut)
 async def get_document_status(
     document_id: str,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """
-    FIX progression : endpoint dédié pour poller le statut d'un document en cours
-    de traitement. Le frontend peut appeler cet endpoint toutes les 2 secondes
-    pour afficher une barre de progression.
-    """
     doc = await db.get(Document, UUID(document_id))
     if not doc:
         raise HTTPException(404, "Document introuvable")
@@ -248,8 +266,6 @@ async def delete_document(
 
     await delete_document_chunks(document_id, str(current_user.id))
     await db.delete(doc)
-
-    # FIX : commit DB avant suppression fichiers disque
     await db.commit()
 
     for img in images:
