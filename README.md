@@ -27,15 +27,15 @@ Browser → Nginx (port 80)
     └────────┬────────┘
              │ /api/*
     ┌────────▼────────┐
-    │  Backend         │  FastAPI (port 8000)
-    └──┬──────┬───┬───┘
-       │      │   │
-  ┌────▼─┐ ┌──▼──┐ ┌▼──────┐
-  │Ollama│ │Qdrant│ │Postgres│
-  │LLM + │ │Vect. │ │Users + │
-  │Embed.│ │Base  │ │Docs +  │
-  └──────┘ └─────┘ │Histor. │
-                    └────────┘
+    │  Backend        │  FastAPI (port 8000)
+    └──┬──────┬───────┘
+       │      │       │
+  ┌────▼─┐ ┌──▼───┐  ┌▼───────┐
+  │Ollama│ │Qdrant│  │Postgres│
+  │LLM + │ │Vect. │  │Users + │
+  │Embed.│ │Base  │  │Docs +  │
+  └──────┘ └──────┘  │Histor. │
+                     └────────┘
 ```
 
 **Pipeline RAG :**
@@ -80,7 +80,7 @@ git --version
 ### 1. Cloner le dépôt
 
 ```bash
-git clone https://github.com/delferiermaxime-cmd/rag-pipeline.git
+git clone https://github.com/delferiermaxime-cmd/rag-pipeline-photo.git
 cd rag-pipeline
 ```
 
