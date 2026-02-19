@@ -330,9 +330,9 @@ export default function ChatPage() {
                     <div className={styles.sources}>
                       {msg.sources.map((s, j) => {
                         const chunkKey = `${i}-${j}`
-                        const isExpanded = expandedChunks[chunkKey]
-                        const PREVIEW_LEN = 200
-                        const isLong = s.content.length > PREVIEW_LEN
+                        const isExpanded = !!expandedChunks[chunkKey]
+                        const PREVIEW_LEN = 300
+                        const isLong = s.content.length > PREVIEW_LEN + 20
                         return (
                           <div key={j} className={styles.source}>
                             <div className={styles.sourceHeader}>
@@ -340,15 +340,15 @@ export default function ChatPage() {
                               {s.page && <span className={styles.sourcePage}>p.{s.page}</span>}
                               <span className={styles.sourceScore}>{(s.score * 100).toFixed(0)}%</span>
                             </div>
-                            <p className={styles.sourceContent}>
+                            <p className={styles.sourceContent} style={{ whiteSpace: 'pre-wrap' }}>
                               {isLong && !isExpanded ? s.content.slice(0, PREVIEW_LEN) + '…' : s.content}
                             </p>
                             {isLong && (
                               <button
                                 onClick={() => toggleChunk(i, j)}
-                                style={{ background: 'none', border: 'none', color: 'var(--accent)', fontSize: 11, cursor: 'pointer', padding: '2px 0', display: 'flex', alignItems: 'center', gap: 4 }}
+                                style={{ background: 'none', border: 'none', color: 'var(--accent)', fontSize: 11, cursor: 'pointer', padding: '4px 0', display: 'flex', alignItems: 'center', gap: 4 }}
                               >
-                                {isExpanded ? <><ChevronUp size={11} /> Réduire</> : <><ChevronDown size={11} /> Voir le chunk complet</>}
+                                {isExpanded ? <><ChevronUp size={11} /> Réduire</> : <><ChevronDown size={11} /> Voir le chunk complet ({s.content.length} chars)</>}
                               </button>
                             )}
                             {s.image_filenames && s.image_filenames.length > 0 && (
