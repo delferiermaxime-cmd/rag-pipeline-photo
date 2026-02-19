@@ -6,11 +6,8 @@ import re
 import tempfile
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
-
 logger = logging.getLogger(__name__)
-
 IMAGES_DIR = "/app/images_storage"
-
 try:
     from docling.document_converter import DocumentConverter, PdfFormatOption
     from docling.datamodel.base_models import InputFormat
@@ -21,7 +18,6 @@ try:
 except Exception as e:
     _DOCLING_OK = False
     logger.error(f"Docling import échoué: {e}")
-
 EXT_TO_FORMAT: Dict[str, Any] = {}
 if _DOCLING_OK:
     EXT_TO_FORMAT = {
@@ -40,12 +36,8 @@ else:
         ".html": "txt", ".htm": "txt",
         ".pdf": "pdf", ".docx": "docx",
     }
-
-
 def _ensure_images_dir() -> None:
     os.makedirs(IMAGES_DIR, exist_ok=True)
-
-
 def _build_converter(ext: str) -> "DocumentConverter":
     opts = PdfPipelineOptions()
     opts.do_ocr = True                  # OCR sur les images scannées
@@ -53,7 +45,6 @@ def _build_converter(ext: str) -> "DocumentConverter":
     opts.images_scale = 2.0             # Résolution des images exportées
     opts.generate_page_images = True    # Exporter une image par page
     opts.generate_picture_images = True # Exporter les images du document
-
     if ext == ".pdf":
         return DocumentConverter(
             format_options={
@@ -64,8 +55,6 @@ def _build_converter(ext: str) -> "DocumentConverter":
             }
         )
     return DocumentConverter()
-
-
 def _chunk_markdown(
     markdown: str,
     filename: str,
@@ -74,11 +63,9 @@ def _chunk_markdown(
 ) -> List[Dict[str, Any]]:
     heading_re = re.compile(r"^(#{1,6}\s.+)$", re.MULTILINE)
     parts = heading_re.split(markdown)
-
     sections: List[Dict[str, str]] = []
     current_heading = Path(filename).stem
     buffer = ""
-
     for part in parts:
         part = part.strip()
         if not part:
@@ -92,31 +79,44 @@ def _chunk_markdown(
             buffer += part + "\n"
     if buffer.strip():
         sections.append({"heading": current_heading, "content": buffer.strip()})
-
     if not sections:
         sections = [{"heading": Path(filename).stem, "content": markdown}]
-
     chunks: List[Dict[str, Any]] = []
     last_chunk_tail = ""
-
     def _add_chunk(title: str, text: str, page: int) -> None:
-    nonlocal last_chunk_tail
-    prefixed = (last_chunk_tail + "\n\n" + text).strip() if last_chunk_tail else text.strip()
-    # Extraire le vrai titre depuis le premier header ## trouvé dans le contenu
-    real_title = title
-    for line in prefixed.split("\n"):
-        m = re.match(r"^#{1,6}\s+(.+)", line.strip())
-        if m:
-            real_title = f"{Path(filename).stem} — {m.group(1).strip()}"
-            break
-    chunks.append({
-        "page": page,
-        "title": real_title,
-        "content": prefixed,
-        "chunk_index": len(chunks),
-    })
-    last_chunk_tail = text.strip()[-overlap:] if len(text.strip()) > overlap else text.strip()
-
+        nonlocal last_chunk_tail
+        prefixed = (last_chunk_tail + "\n\n" + text).strip() if last_chunk_tail else text.strip()
+        real_title = title
+        for line in prefixed.split("\n"):
+            m = re.match(r"^#{1,6}\s+(.+)", line.strip())
+            if m:
+                real_title = f"{Path(filename).stem} — {m.group(1).strip()}"
+                break
+        chunks.append({
+            "page": page,
+            "title": real_title,
+            "content": prefixed,
+            "chunk_index": len(chunks),
+        })
+        last_chunk_tail = text.strip()[-overlap:] if len(text.strip()) > overlap else text.strip()
+    for i, section in enumerate(sections):
+        text = section["content"]
+        title = f"{Path(filename).stem} — {section['heading']}"
+        page = i + 1
+        if len(text) <= max_chars:
+            _add_chunk(title, text, page)
+        else:
+            paragraphs = [p.strip() for p in text.split("\n\n") if p.strip()]
+            buf = ""
+            for para in paragraphs:
+                if buf and len(buf) + len(para) + 2 > max_chars:
+                    _add_chunk(title, buf.strip(), page)
+                    buf = para + "\n\n"
+                else:
+                    buf += para + "\n\n"
+            if buf.strip():
+                _add_chunk(title, buf.strip(), page)
+    return chunks or [{"page": 1, "title": filename, "content": "(vide)", "chunk_index": 0}]
 def _save_images_sync(
     result: Any,
     document_id: str,
@@ -127,10 +127,8 @@ def _save_images_sync(
     """
     _ensure_images_dir()
     saved: List[Dict[str, Any]] = []
-
     try:
         doc = result.document
-
         # Images par page (page entière rendue)
         for page_no, page in enumerate(doc.pages, start=1):
             if hasattr(page, 'image') and page.image is not None:
@@ -141,7 +139,6 @@ def _save_images_sync(
                     img.pil_image.save(fpath, "PNG")
                     saved.append({"page": page_no, "filename": fname, "type": "page"})
                     logger.debug(f"Image page {page_no} sauvegardée : {fname}")
-
         # Images inline (figures, logos, photos dans le document)
         for elem_idx, element in enumerate(doc.elements or []):
             if hasattr(element, 'image') and element.image is not None:
@@ -153,14 +150,10 @@ def _save_images_sync(
                     img.pil_image.save(fpath, "PNG")
                     saved.append({"page": page_no, "filename": fname, "type": "inline"})
                     logger.debug(f"Image inline elem {elem_idx} p{page_no} sauvegardée : {fname}")
-
     except Exception as e:
         logger.warning(f"Extraction images partielle : {e}")
-
     logger.info(f"[Images] {len(saved)} images extraites pour document {document_id}")
     return saved
-
-
 def _convert_sync(
     tmp_path: str,
     ext: str,
@@ -171,15 +164,11 @@ def _convert_sync(
     converter = _build_converter(ext)
     result = converter.convert(tmp_path)
     markdown: str = result.document.export_to_markdown()
-
     if not markdown or not markdown.strip():
         return [{"page": 1, "title": filename, "content": "(document vide)", "chunk_index": 0}], []
-
     chunks = _chunk_markdown(markdown, filename)
     images = _save_images_sync(result, document_id)
     return chunks, images
-
-
 def _fallback_parse(file_bytes: bytes, filename: str) -> str:
     ext = Path(filename).suffix.lower()
     if ext in (".txt", ".md", ".csv", ".html", ".htm"):
@@ -210,8 +199,6 @@ def _fallback_parse(file_bytes: bytes, filename: str) -> str:
         except Exception as e:
             raise RuntimeError(f"Impossible de lire le DOCX: {e}")
     raise ValueError(f"Format non supporté: {ext}")
-
-
 async def convert_document(
     file_bytes: bytes,
     filename: str,
@@ -223,7 +210,6 @@ async def convert_document(
     images : liste de dicts avec page/filename/type
     """
     ext = Path(filename).suffix.lower()
-
     if _DOCLING_OK and ext in EXT_TO_FORMAT:
         logger.info(f"[Docling] Conversion '{filename}' ({len(file_bytes):,} bytes)")
         tmp_path = None
