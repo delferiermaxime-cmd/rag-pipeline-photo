@@ -117,6 +117,7 @@ export function streamChat(
     systemPrompt?: string
   },
   documentIds?: string[],
+  skipRag?: boolean,
 ): () => void {
   const token = getToken()
   const controller = new AbortController()
@@ -135,6 +136,7 @@ export function streamChat(
       context_max_chars: settings?.contextMaxChars,
       system_prompt: settings?.systemPrompt,
       document_ids: documentIds && documentIds.length > 0 ? documentIds : null,
+      skip_rag: skipRag ?? false,
     }),
     signal: controller.signal,
   }).then(async (res) => {
