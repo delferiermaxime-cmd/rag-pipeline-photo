@@ -18,7 +18,7 @@ RAG_SYSTEM_PROMPT = """Tu es un assistant intelligent et polyvalent.
 
 Règles :
 1. Si des documents sont fournis dans le CONTEXTE, base ta réponse dessus et cite les sources.
-2. Si AUCUN document n'est fourni, réponds TOUJOURS à la question en utilisant tes connaissances générales. Tu ne dois JAMAIS répondre "Information non trouvée dans les documents fournis" quand aucun document n'est présent — réponds simplement et naturellement.
+2. Si AUCUN document n'est fourni, réponds TOUJOURS à la question en utilisant tes connaissances générales. Tu ne dois JAMAIS répondre "Information non trouvée dans les documents fournis" quand aucun document n'est présent.
 3. Sois précis et concis."""
 
 
@@ -53,30 +53,6 @@ def _load_image_base64(filename: str) -> Optional[str]:
         return None
 
 
-async def _model_supports_vision(model: str, http_client: httpx.AsyncClient) -> bool:
-    """Vérifie si le modèle supporte la vision via l'API Ollama."""
-    try:
-        response = await http_client.get(
-            f"{settings.OLLAMA_BASE_URL}/api/show",
-            params={"name": model},
-            timeout=httpx.Timeout(10.0),
-        )
-        if response.status_code != 200:
-            return False
-        data = response.json()
-        # Ollama expose les capacités dans modelinfo ou capabilities
-        capabilities = data.get("capabilities", [])
-        if "vision" in capabilities:
-            return True
-        # Fallback : vérifier dans les détails du modèle
-        details = data.get("details", {})
-        families = details.get("families", [])
-        # gemma3, llava, moondream, minicpm-v supportent la vision
-        vision_families = {"clip", "vision", "llava", "gemma3", "moondream", "minicpm"}
-        return any(f.lower() in vision_families for f in families)
-    except Exception as e:
-        logger.warning(f"Impossible de vérifier les capacités du modèle {model}: {e}")
-        return False
 
 
 async def stream_rag_response(
@@ -130,15 +106,14 @@ async def stream_rag_response(
     yield _sse({"type": "sources", "sources": sources})
     # Même sans chunks, on appelle le LLM — il répond depuis ses connaissances générales
 
-    # 4. Vérifier si le modèle supporte la vision
-    supports_vision = await _model_supports_vision(model, http_client)
-    logger.info(f"Modèle {model} vision: {supports_vision}")
+    # 4. Vision désactivée (GET /api/show non supporté par Ollama)
+    supports_vision = False
 
     # 5. Construire le prompt texte
     if chunks:
         prompt = _build_prompt(question, chunks, context_max_chars=context_max_chars if context_max_chars else 12000)
     else:
-        prompt = f"Aucun document n'est disponible pour cette question. Réponds directement depuis tes connaissances générales.\n\nQUESTION : {question}"
+        prompt = f"Aucun document n'est disponible. Réponds depuis tes connaissances générales.\n\nQUESTION : {question}"
 
     # 6. Construire les messages
     effective_prompt = system_prompt if system_prompt and system_prompt.strip() else RAG_SYSTEM_PROMPT
