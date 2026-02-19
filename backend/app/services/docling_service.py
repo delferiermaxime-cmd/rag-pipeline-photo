@@ -100,37 +100,22 @@ def _chunk_markdown(
     last_chunk_tail = ""
 
     def _add_chunk(title: str, text: str, page: int) -> None:
-        nonlocal last_chunk_tail
-        prefixed = (last_chunk_tail + "\n\n" + text).strip() if last_chunk_tail else text.strip()
-        chunks.append({
-            "page": page,
-            "title": title,
-            "content": prefixed,
-            "chunk_index": len(chunks),
-        })
-        last_chunk_tail = text.strip()[-overlap:] if len(text.strip()) > overlap else text.strip()
-
-    for i, section in enumerate(sections):
-        text = section["content"]
-        title = f"{Path(filename).stem} — {section['heading']}"
-        page = i + 1
-
-        if len(text) <= max_chars:
-            _add_chunk(title, text, page)
-        else:
-            paragraphs = [p.strip() for p in text.split("\n\n") if p.strip()]
-            buf = ""
-            for para in paragraphs:
-                if buf and len(buf) + len(para) + 2 > max_chars:
-                    _add_chunk(title, buf.strip(), page)
-                    buf = para + "\n\n"
-                else:
-                    buf += para + "\n\n"
-            if buf.strip():
-                _add_chunk(title, buf.strip(), page)
-
-    return chunks or [{"page": 1, "title": filename, "content": "(vide)", "chunk_index": 0}]
-
+    nonlocal last_chunk_tail
+    prefixed = (last_chunk_tail + "\n\n" + text).strip() if last_chunk_tail else text.strip()
+    # Extraire le vrai titre depuis le premier header ## trouvé dans le contenu
+    real_title = title
+    for line in prefixed.split("\n"):
+        m = re.match(r"^#{1,6}\s+(.+)", line.strip())
+        if m:
+            real_title = f"{Path(filename).stem} — {m.group(1).strip()}"
+            break
+    chunks.append({
+        "page": page,
+        "title": real_title,
+        "content": prefixed,
+        "chunk_index": len(chunks),
+    })
+    last_chunk_tail = text.strip()[-overlap:] if len(text.strip()) > overlap else text.strip()
 
 def _save_images_sync(
     result: Any,
