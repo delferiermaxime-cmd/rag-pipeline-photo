@@ -10,7 +10,7 @@ services:
       POSTGRES_PASSWORD: ragpassword
     volumes:
       - postgres_data:/var/lib/postgresql/data
-    # ✅ Rien à changer
+ 
 
 
   # ── Qdrant ─────────────────────────────────────────────────────────────────
@@ -19,7 +19,6 @@ services:
     restart: unless-stopped
     volumes:
       - qdrant_data:/qdrant/storage
-    # ✅ Rien à changer
 
 
   # ── Ollama ─────────────────────────────────────────────────────────────────
@@ -74,6 +73,7 @@ services:
       # SECRET_KEY et CORS_ORIGINS viennent du env_file ci-dessus — ne pas les redéfinir ici
     volumes:
       - uploads_tmp:/tmp/uploads
+      - images_data:/app/images_storage
 
 
   # ── Frontend ────────────────────────────────────────────────────────────────
@@ -85,8 +85,8 @@ services:
     depends_on:
       - backend
     environment:
-      NEXT_PUBLIC_API_URL: ""   # ✅ Vide = le browser passe par Nginx pour joindre le backend
-    # ✅ Rien d'autre à changer
+      NEXT_PUBLIC_API_URL: ""   # Vide = le browser passe par Nginx pour joindre le backend
+
 
 
   # ── Nginx ───────────────────────────────────────────────────────────────────
@@ -94,7 +94,7 @@ services:
     image: nginx:alpine
     restart: unless-stopped
     ports:
-      - "80:80"   # ✅ Seul port exposé — tout le trafic passe par Nginx
+      - "80:80"   # Seul port exposé — tout le trafic passe par Nginx
     depends_on:
       - backend
       - frontend
@@ -107,3 +107,4 @@ volumes:
   qdrant_data:
   ollama_data:
   uploads_tmp:
+  images_data:
