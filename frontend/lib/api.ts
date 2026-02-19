@@ -102,7 +102,7 @@ export function streamChat(
   onError: (err: string) => void,
   onConversationId: (id: string) => void,
   conversationId?: string,
-  settings?: { temperature?: number; topK?: number; maxTokens?: number; minScore?: number; contextMaxChars?: number },
+  settings?: { temperature?: number; topK?: number; maxTokens?: number },
 ): () => void {
   const token = getToken()
   const controller = new AbortController()
@@ -117,8 +117,6 @@ export function streamChat(
       temperature: settings?.temperature,
       top_k: settings?.topK,
       max_tokens: settings?.maxTokens,
-      min_score: settings?.minScore,
-      context_max_chars: settings?.contextMaxChars,
     }),
     signal: controller.signal,
   }).then(async (res) => {
@@ -150,7 +148,7 @@ export function streamChat(
   return () => controller.abort()
 }
 
-export interface Source { document_id: string; title: string; page: number | null; content: string; score: number }
+export interface Source { document_id: string; title: string; page: number | null; content: string; score: number; image_filenames: string[] }
 export interface Document { id: string; original_name: string; file_type: string; status: string; chunk_count: number; created_at: string; error_message?: string }
 export interface Conversation { id: string; title: string; created_at: string; updated_at: string }
 export interface ConversationDetail extends Conversation {
