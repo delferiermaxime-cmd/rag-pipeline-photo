@@ -239,7 +239,7 @@ async def stream_rag_response(
             "document_id": c.get("document_id", ""),
             "title": c.get("title", "Document"),
             "page": c.get("page", ""),
-            "content": (c.get("content", "")[:200] + "...") if len(c.get("content", "")) > 200 else c.get("content", ""),
+            "content": c.get("content", ""),  # chunk complet envoyé au frontend
             "score": round(c.get("score", 0.0), 3),
             "image_filenames": c.get("image_filenames", []),
         }
