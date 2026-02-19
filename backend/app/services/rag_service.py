@@ -17,10 +17,17 @@ logger = logging.getLogger(__name__)
 
 RAG_SYSTEM_PROMPT = """Tu es un assistant intelligent et polyvalent.
 
-Règles :
-1. Si des documents sont fournis dans le CONTEXTE, base ta réponse dessus et cite les sources précisément (article, section, page).
-2. Si AUCUN document n'est fourni, réponds TOUJOURS à la question en utilisant tes connaissances générales. Tu ne dois JAMAIS répondre "Information non trouvée dans les documents fournis" quand aucun document n'est présent.
-3. Sois précis et concis."""
+Règles STRICTES :
+1. Si le CONTEXTE contient des informations PERTINENTES pour répondre à la question → utilise-les et cite les sources (article, section, page).
+2. Si le CONTEXTE existe mais n'est PAS pertinent pour la question posée → IGNORE le contexte et réponds depuis tes connaissances générales. Ne mentionne JAMAIS les documents dans ce cas.
+3. Si aucun CONTEXTE n'est fourni → réponds depuis tes connaissances générales.
+4. Tu ne dois JAMAIS dire "les documents ne contiennent pas cette information" ou "je ne peux pas répondre" si la réponse existe dans tes connaissances générales.
+5. Sois précis et concis."""
+
+# Seuil de score minimum pour considérer un chunk comme pertinent
+# En dessous de ce seuil, les chunks sont retournés comme sources mais
+# le prompt indique au LLM de ne pas s'y fier
+_MIN_RELEVANT_SCORE = 0.45
 
 # ── Cache vision par modèle ──────────────────────────────────────────────────
 # FIX : évite d'appeler /api/show à chaque message pour le même modèle
@@ -220,14 +227,26 @@ async def stream_rag_response(
     # 5. Vision : vérification cachée (pas d'appel HTTP si déjà connu)
     supports_vision = await _check_vision_support(model, http_client)
 
-    # 6. Prompt texte
-    if chunks:
+    # 6. Prompt texte — on distingue chunks pertinents vs chunks non pertinents
+    relevant_chunks = [c for c in chunks if c.get("score", 0) >= _MIN_RELEVANT_SCORE]
+
+    if relevant_chunks:
+        # Des chunks pertinents existent → on les inclut dans le contexte
         prompt = _build_prompt(
             question,  # question originale pour le LLM (pas la condensée)
-            chunks,
+            relevant_chunks,
             context_max_chars=context_max_chars if context_max_chars else 12000
         )
+    elif chunks:
+        # Qdrant a retourné des chunks mais aucun n'est assez pertinent
+        # → on demande explicitement au LLM d'utiliser ses connaissances générales
+        prompt = (
+            f"Les documents disponibles ne contiennent pas d'information pertinente "
+            f"pour cette question. Réponds depuis tes connaissances générales.\n\n"
+            f"QUESTION : {question}"
+        )
     else:
+        # Aucun chunk retourné du tout
         prompt = f"Aucun document n'est disponible. Réponds depuis tes connaissances générales.\n\nQUESTION : {question}"
 
     # 7. Messages — historique complet envoyé au LLM à chaque fois
@@ -237,11 +256,11 @@ async def stream_rag_response(
         for msg in history[-10:]:
             messages.append({"role": msg["role"], "content": msg["content"]})
 
-    # 8. Message utilisateur avec images si vision supportée
-    if supports_vision and chunks:
+    # 8. Message utilisateur avec images si vision supportée (uniquement sur chunks pertinents)
+    if supports_vision and relevant_chunks:
         image_filenames = []
         seen = set()
-        for c in chunks[:3]:
+        for c in relevant_chunks[:3]:
             for fname in c.get("image_filenames", []):
                 if fname not in seen:
                     image_filenames.append(fname)
