@@ -53,6 +53,7 @@ class ChatMessageRequest(BaseModel):
     min_score: Optional[float] = 0.3
     context_max_chars: Optional[int] = 12000
     system_prompt: Optional[str] = None
+    skip_rag: bool = False  # Si True, bypass Qdrant — répond depuis connaissances générales
 
 # FIX : suppression de "ChatMessage = ChatMessageRequest"
 # Cette ligne écrasait silencieusement le modèle SQLAlchemy ChatMessage
