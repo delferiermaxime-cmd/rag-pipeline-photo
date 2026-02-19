@@ -1,7 +1,7 @@
 'use client'
 import { useState, useCallback, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
-import { Upload, CheckCircle, XCircle, FileText } from 'lucide-react'
+import { Upload, CheckCircle, XCircle, FileText, Search, Trash2 } from 'lucide-react'
 import Sidebar from '@/components/Sidebar'
 import { getMe, uploadDocument, listDocuments, deleteDocument, getDocumentStatus, type Document } from '@/lib/api'
 import styles from './upload.module.css'
@@ -17,7 +17,6 @@ const ALLOWED = [
   '.asciidoc', '.adoc',
 ]
 
-// Étapes du pipeline avec leurs paliers de progression
 const STEPS = [
   { min: 0,  max: 10,  label: '📄 Réception du fichier…' },
   { min: 10, max: 40,  label: '🔍 Conversion Docling (OCR, tableaux…)' },
@@ -39,7 +38,8 @@ export default function UploadPage() {
   const [documents, setDocuments] = useState<Document[]>([])
   const [loadingDocs, setLoadingDocs] = useState(true)
   const [deleting, setDeleting] = useState<string | null>(null)
-  // Map docId → progression locale (pour les docs qu'on vient d'uploader)
+  const [deletingAll, setDeletingAll] = useState(false)
+  const [search, setSearch] = useState('')
   const [liveProgress, setLiveProgress] = useState<Record<string, { progress: number; detail: string }>>({})
 
   useEffect(() => {
@@ -57,26 +57,18 @@ export default function UploadPage() {
     setLoadingDocs(false)
   }
 
-  // Poll le statut d'un document toutes les 2s et met à jour liveProgress
   async function pollProgress(docId: string) {
     const maxPolls = 150
     let polls = 0
-
     const interval = setInterval(async () => {
       polls++
       try {
         const doc = await getDocumentStatus(docId)
         const progress = doc.progress ?? 0
         const detail = doc.status_detail || getStepLabel(progress)
-
-        setLiveProgress(prev => ({
-          ...prev,
-          [docId]: { progress, detail },
-        }))
-
+        setLiveProgress(prev => ({ ...prev, [docId]: { progress, detail } }))
         if (doc.status === 'ready' || doc.status === 'error') {
           clearInterval(interval)
-          // Garde le statut final 2s puis retire de liveProgress
           setTimeout(() => {
             setLiveProgress(prev => {
               const next = { ...prev }
@@ -87,13 +79,9 @@ export default function UploadPage() {
           loadDocs()
         }
       } catch {}
-
       if (polls >= maxPolls) {
         clearInterval(interval)
-        setLiveProgress(prev => ({
-          ...prev,
-          [docId]: { progress: 0, detail: '⚠️ Timeout — vérifiez les logs' },
-        }))
+        setLiveProgress(prev => ({ ...prev, [docId]: { progress: 0, detail: '⚠️ Timeout — vérifiez les logs' } }))
       }
     }, 2000)
   }
@@ -105,18 +93,14 @@ export default function UploadPage() {
       alert(`Formats acceptés :\n${ALLOWED.join(', ')}`)
       return
     }
-
     for (const file of valid) {
       try {
         const doc = await uploadDocument(file)
-        // Démarre le poll dès que le document est créé en DB
-        setLiveProgress(prev => ({
-          ...prev,
-          [doc.id]: { progress: 0, detail: '📄 Réception du fichier…' },
-        }))
+        setLiveProgress(prev => ({ ...prev, [doc.id]: { progress: 0, detail: '📄 Réception du fichier…' } }))
         loadDocs()
         pollProgress(doc.id)
       } catch (err: any) {
+        // Doublon détecté (409) ou autre erreur
         alert(`Erreur upload "${file.name}" : ${err.message}`)
       }
     }
@@ -134,16 +118,33 @@ export default function UploadPage() {
     try {
       await deleteDocument(id)
       setDocuments(prev => prev.filter(d => d.id !== id))
-      setLiveProgress(prev => {
-        const next = { ...prev }
-        delete next[id]
-        return next
-      })
+      setLiveProgress(prev => { const next = { ...prev }; delete next[id]; return next })
     } catch (err: any) {
       alert(err.message)
     }
     setDeleting(null)
   }
+
+  async function handleDeleteAll() {
+    if (!confirm(`Supprimer TOUS les ${documents.length} documents et leurs vecteurs ? Cette action est irréversible.`)) return
+    setDeletingAll(true)
+    try {
+      const res = await fetch('/api/v1/documents/all', {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${localStorage.getItem('token')}` },
+      })
+      if (!res.ok) throw new Error('Erreur suppression')
+      setDocuments([])
+      setLiveProgress({})
+    } catch (err: any) {
+      alert(err.message)
+    }
+    setDeletingAll(false)
+  }
+
+  const filteredDocs = documents.filter(d =>
+    d.original_name.toLowerCase().includes(search.toLowerCase())
+  )
 
   return (
     <div className={styles.layout}>
@@ -179,17 +180,48 @@ export default function UploadPage() {
 
         {/* Liste des documents */}
         <div className={styles.section}>
-          <h2 className={styles.sectionTitle}>
-            Base vectorielle partagée — {documents.length} document{documents.length !== 1 ? 's' : ''}
-          </h2>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12, gap: 12, flexWrap: 'wrap' }}>
+            <h2 className={styles.sectionTitle} style={{ margin: 0 }}>
+              Base vectorielle partagée — {documents.length} document{documents.length !== 1 ? 's' : ''}
+            </h2>
+            {documents.length > 0 && (
+              <button
+                className="danger"
+                onClick={handleDeleteAll}
+                disabled={deletingAll}
+                style={{ fontSize: 12, padding: '6px 12px', flexShrink: 0 }}
+              >
+                {deletingAll
+                  ? <span className="spinner" style={{ width: 14, height: 14 }} />
+                  : <><Trash2 size={13} style={{ marginRight: 4, verticalAlign: 'middle' }} />Tout supprimer</>
+                }
+              </button>
+            )}
+          </div>
+
+          {/* Barre de recherche */}
+          {documents.length > 0 && (
+            <div style={{ position: 'relative', marginBottom: 12 }}>
+              <Search size={14} style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)', pointerEvents: 'none' }} />
+              <input
+                type="text"
+                placeholder="Rechercher un document…"
+                value={search}
+                onChange={e => setSearch(e.target.value)}
+                style={{ width: '100%', paddingLeft: 32, paddingRight: 12, height: 36, fontSize: 13, background: 'var(--bg-2)', border: '1px solid var(--border)', borderRadius: 8, color: 'var(--text)', boxSizing: 'border-box' }}
+              />
+            </div>
+          )}
 
           {loadingDocs && documents.length === 0 ? (
             <div style={{ padding: 20, textAlign: 'center' }}><span className="spinner" /></div>
           ) : documents.length === 0 ? (
             <p className={styles.emptyDocs}>Aucun document indexé.</p>
+          ) : filteredDocs.length === 0 ? (
+            <p className={styles.emptyDocs}>Aucun document correspondant à &quot;{search}&quot;</p>
           ) : (
             <div className={styles.uploadList}>
-              {documents.map(doc => {
+              {filteredDocs.map(doc => {
                 const live = liveProgress[doc.id]
                 const isProcessing = doc.status === 'processing' || !!live
                 const progress = live?.progress ?? doc.progress ?? 0
@@ -200,7 +232,6 @@ export default function UploadPage() {
                     <FileText size={16} className={styles.fileIcon} />
 
                     <div className={styles.fileInfo}>
-                      {/* Nom + statut sur la même ligne */}
                       <div className={styles.fileRow}>
                         <span className={styles.fileName}>{doc.original_name}</span>
                         <span className={styles.fileMeta}>
@@ -208,14 +239,12 @@ export default function UploadPage() {
                         </span>
                       </div>
 
-                      {/* Message d'état */}
                       <span className={`${styles.fileMessage} ${doc.status === 'error' ? styles.fileMessageError : ''}`}>
                         {doc.status === 'ready' && !live && `✅ ${doc.chunk_count} chunks indexés`}
                         {doc.status === 'error' && !live && `❌ ${doc.error_message || 'Erreur lors du traitement'}`}
                         {isProcessing && stepLabel}
                       </span>
 
-                      {/* Barre de progression — visible uniquement pendant le traitement */}
                       {isProcessing && (
                         <div className={styles.progressWrapper}>
                           <div className={styles.progressBar}>
@@ -229,18 +258,16 @@ export default function UploadPage() {
                       )}
                     </div>
 
-                    {/* Icône statut */}
                     <div className={styles.fileStatus}>
                       {isProcessing && <span className="spinner" style={{ width: 18, height: 18 }} />}
                       {doc.status === 'ready' && !live && <CheckCircle size={18} color="var(--success)" />}
                       {doc.status === 'error' && !live && <XCircle size={18} color="var(--error)" />}
                     </div>
 
-                    {/* Bouton suppression — désactivé pendant le traitement */}
                     <button
                       className="danger"
                       onClick={() => handleDelete(doc.id)}
-                      disabled={deleting === doc.id || isProcessing}
+                      disabled={deleting === doc.id || isProcessing || deletingAll}
                       style={{ padding: '6px 10px', fontSize: 12, flexShrink: 0 }}
                     >
                       {deleting === doc.id
