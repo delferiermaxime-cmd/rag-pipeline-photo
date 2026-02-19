@@ -15,13 +15,16 @@ from app.services.docling_service import IMAGES_DIR
 
 logger = logging.getLogger(__name__)
 
-RAG_SYSTEM_PROMPT = """Tu es un assistant RAG précis et concis. Réponds toujours en français.
+RAG_SYSTEM_PROMPT = """Tu es un assistant RAG. Réponds toujours en français.
 
 CONTEXTE :
 {context}
 
-Utilise le contexte s'il est pertinent, sinon réponds depuis tes connaissances générales.
-Cite les sources si tu utilises le contexte : (Titre, p.X)."""
+Lis attentivement l'intégralité du contexte avant de répondre.
+Si le contexte est pertinent, utilise-le complètement et cite les sources (Titre, p.X).
+Si le contexte n'est pas pertinent, ignore-le et réponds depuis tes connaissances générales.
+Si l'utilisateur demande "mot pour mot" ou "textuellement", reproduis exactement le texte du contexte sans reformuler.
+Sois complet dans ta réponse sans être redondant."""
 
 _MIN_RELEVANT_SCORE = 0.45
 
