@@ -3,6 +3,7 @@ import base64
 import json
 import logging
 import os
+import time
 from typing import AsyncGenerator, Any, Dict, List, Optional
 
 import httpx
@@ -17,9 +18,15 @@ logger = logging.getLogger(__name__)
 RAG_SYSTEM_PROMPT = """Tu es un assistant intelligent et polyvalent.
 
 Règles :
-1. Si des documents sont fournis dans le CONTEXTE, base ta réponse dessus et cite les sources.
+1. Si des documents sont fournis dans le CONTEXTE, base ta réponse dessus et cite les sources précisément (article, section, page).
 2. Si AUCUN document n'est fourni, réponds TOUJOURS à la question en utilisant tes connaissances générales. Tu ne dois JAMAIS répondre "Information non trouvée dans les documents fournis" quand aucun document n'est présent.
 3. Sois précis et concis."""
+
+# ── Cache vision par modèle ──────────────────────────────────────────────────
+# FIX : évite d'appeler /api/show à chaque message pour le même modèle
+# Structure : { model_name: { "supports": bool, "ts": float } }
+_vision_cache: Dict[str, Dict] = {}
+_VISION_CACHE_TTL = 300  # 5 minutes — au cas où le modèle change
 
 
 def _sse(data: dict) -> str:
@@ -41,7 +48,6 @@ def _build_prompt(question: str, chunks: List[Dict[str, Any]], context_max_chars
 
 
 def _load_image_base64(filename: str) -> Optional[str]:
-    """Charge une image depuis le disque et la retourne en base64."""
     filepath = os.path.join(IMAGES_DIR, filename)
     if not os.path.exists(filepath):
         return None
@@ -53,6 +59,104 @@ def _load_image_base64(filename: str) -> Optional[str]:
         return None
 
 
+async def _check_vision_support(model: str, http_client: httpx.AsyncClient) -> bool:
+    """
+    FIX cache : vérifie si le modèle supporte la vision via /api/show d'Ollama.
+    Résultat mis en cache 5 minutes pour ne pas appeler /api/show à chaque message.
+    """
+    now = time.time()
+    cached = _vision_cache.get(model)
+    if cached and (now - cached["ts"]) < _VISION_CACHE_TTL:
+        return cached["supports"]
+
+    try:
+        response = await http_client.post(
+            f"{settings.OLLAMA_BASE_URL}/api/show",
+            json={"name": model},
+            timeout=httpx.Timeout(10.0),
+        )
+        if response.status_code != 200:
+            _vision_cache[model] = {"supports": False, "ts": now}
+            return False
+        data = response.json()
+        model_info = str(data).lower()
+        supports = "clip" in model_info or "vision" in model_info or "multimodal" in model_info
+        _vision_cache[model] = {"supports": supports, "ts": now}
+        logger.info(f"Vision cache mis à jour — {model}: {supports}")
+        return supports
+    except Exception as e:
+        logger.debug(f"Impossible de vérifier la vision pour {model}: {e}")
+        # En cas d'erreur, on assume pas de vision mais on ne cache pas
+        # pour retenter au prochain message
+        return False
+
+
+async def _condense_question(
+    question: str,
+    history: List[Dict],
+    http_client: httpx.AsyncClient,
+    model: str,
+) -> str:
+    """
+    FIX query condensation : si la question fait référence à des éléments
+    de la conversation précédente ("et le suivant ?", "parle-moi de ça"),
+    on demande au LLM de la reformuler en question autonome avant de l'embedder.
+
+    Exemples :
+      Histoire : "Parle-moi de l'Art. 12"
+      Question : "Et le suivant ?"
+      → Condensée : "Quel est le contenu de l'Article 13 de la Constitution belge ?"
+
+    Si la question est déjà autonome, le LLM la retourne telle quelle.
+    """
+    if not history:
+        return question
+
+    # On ne condense que si la question est courte ou contient des références
+    # contextuelles — évite un appel LLM inutile sur les questions longues et autonomes
+    ref_indicators = ["et ", "aussi", "le suivant", "précédent", "celui", "celle",
+                      "ce point", "ça", "cela", "il ", "elle ", "ils ", "elles ",
+                      "même", "encore", "suite", "après", "avant", "pareil"]
+    question_lower = question.lower()
+    needs_condensation = len(question) < 80 or any(ind in question_lower for ind in ref_indicators)
+
+    if not needs_condensation:
+        return question
+
+    # Construire le mini-prompt de condensation
+    history_text = "\n".join(
+        f"{m['role'].upper()}: {m['content'][:200]}"
+        for m in history[-6:]  # 3 échanges max pour rester léger
+    )
+    condensation_prompt = f"""Voici l'historique d'une conversation :
+{history_text}
+
+Nouvelle question de l'utilisateur : "{question}"
+
+Reformule cette question en une question AUTONOME et COMPLÈTE qui peut être comprise sans l'historique.
+Si la question est déjà autonome, retourne-la telle quelle.
+Réponds UNIQUEMENT avec la question reformulée, sans explication."""
+
+    try:
+        response = await http_client.post(
+            f"{settings.OLLAMA_BASE_URL}/api/chat",
+            json={
+                "model": model,
+                "messages": [{"role": "user", "content": condensation_prompt}],
+                "stream": False,
+                "options": {"temperature": 0.0, "num_predict": 150},
+            },
+            timeout=httpx.Timeout(20.0),
+        )
+        response.raise_for_status()
+        condensed = response.json().get("message", {}).get("content", "").strip()
+        if condensed and len(condensed) > 5:
+            logger.info(f"Question condensée : '{question}' → '{condensed}'")
+            return condensed
+    except Exception as e:
+        logger.warning(f"Condensation échouée, question originale utilisée : {e}")
+
+    return question
 
 
 async def stream_rag_response(
@@ -70,14 +174,22 @@ async def stream_rag_response(
     system_prompt: Optional[str] = None,
 ) -> AsyncGenerator[str, None]:
 
-    # 1. Embedding de la question
+    # 1. Condensation de la question si nécessaire (référence à l'historique)
+    search_question = question
+    if history:
+        try:
+            search_question = await _condense_question(question, history, http_client, model)
+        except Exception as e:
+            logger.warning(f"Condensation ignorée : {e}")
+
+    # 2. Embedding de la question (condensée ou originale)
     try:
-        query_embedding = await get_embedding(question, http_client)
+        query_embedding = await get_embedding(search_question, http_client)
     except Exception as e:
         yield _sse({"type": "error", "error": f"Erreur embedding: {e}"})
         return
 
-    # 2. Recherche Qdrant
+    # 3. Recherche Qdrant — à chaque message, avec la question condensée
     effective_top_k = top_k if top_k is not None else settings.TOP_K
     try:
         chunks = await search_chunks(
@@ -91,7 +203,7 @@ async def stream_rag_response(
         yield _sse({"type": "error", "error": f"Erreur recherche: {e}"})
         return
 
-    # 3. Sources avec image_filenames
+    # 4. Sources
     sources = [
         {
             "document_id": c.get("document_id", ""),
@@ -104,27 +216,29 @@ async def stream_rag_response(
         for c in chunks
     ]
     yield _sse({"type": "sources", "sources": sources})
-    # Même sans chunks, on appelle le LLM — il répond depuis ses connaissances générales
 
-    # 4. Vision désactivée (GET /api/show non supporté par Ollama)
-    supports_vision = False
+    # 5. Vision : vérification cachée (pas d'appel HTTP si déjà connu)
+    supports_vision = await _check_vision_support(model, http_client)
 
-    # 5. Construire le prompt texte
+    # 6. Prompt texte
     if chunks:
-        prompt = _build_prompt(question, chunks, context_max_chars=context_max_chars if context_max_chars else 12000)
+        prompt = _build_prompt(
+            question,  # question originale pour le LLM (pas la condensée)
+            chunks,
+            context_max_chars=context_max_chars if context_max_chars else 12000
+        )
     else:
         prompt = f"Aucun document n'est disponible. Réponds depuis tes connaissances générales.\n\nQUESTION : {question}"
 
-    # 6. Construire les messages
+    # 7. Messages — historique complet envoyé au LLM à chaque fois
     effective_prompt = system_prompt if system_prompt and system_prompt.strip() else RAG_SYSTEM_PROMPT
     messages = [{"role": "system", "content": effective_prompt}]
     if history:
         for msg in history[-10:]:
             messages.append({"role": msg["role"], "content": msg["content"]})
 
-    # 7. Message utilisateur — avec images si vision supportée
-    if supports_vision:
-        # Collecter les images uniques des chunks trouvés (max 3 pour ne pas surcharger)
+    # 8. Message utilisateur avec images si vision supportée
+    if supports_vision and chunks:
         image_filenames = []
         seen = set()
         for c in chunks[:3]:
@@ -134,9 +248,8 @@ async def stream_rag_response(
                     seen.add(fname)
 
         if image_filenames:
-            # Format multimodal Ollama
             user_content = [{"type": "text", "text": prompt}]
-            for fname in image_filenames[:3]:  # max 3 images
+            for fname in image_filenames[:3]:
                 b64 = _load_image_base64(fname)
                 if b64:
                     user_content.append({
@@ -144,13 +257,13 @@ async def stream_rag_response(
                         "image_url": {"url": f"data:image/png;base64,{b64}"}
                     })
             messages.append({"role": "user", "content": user_content})
-            logger.info(f"Vision activée : {len([c for c in user_content if c['type'] == 'image_url'])} images envoyées")
+            logger.info(f"Vision : {len([c for c in user_content if c['type'] == 'image_url'])} images envoyées")
         else:
             messages.append({"role": "user", "content": prompt})
     else:
         messages.append({"role": "user", "content": prompt})
 
-    # 8. Stream LLM
+    # 9. Stream LLM
     stream_timeout = httpx.Timeout(connect=10.0, read=None, write=30.0, pool=5.0)
     try:
         async with http_client.stream(
@@ -190,11 +303,16 @@ async def stream_rag_response(
 
 async def list_available_models(http_client: httpx.AsyncClient) -> List[str]:
     try:
-        response = await http_client.get(f"{settings.OLLAMA_BASE_URL}/api/tags", timeout=httpx.Timeout(10.0))
+        response = await http_client.get(
+            f"{settings.OLLAMA_BASE_URL}/api/tags",
+            timeout=httpx.Timeout(10.0)
+        )
         response.raise_for_status()
         available = [m["name"] for m in response.json().get("models", [])]
-        return [m for m in settings.OLLAMA_AVAILABLE_MODELS
-                if any(m == a or m.split(":")[0] == a.split(":")[0] for a in available)]
+        return [
+            m for m in settings.OLLAMA_AVAILABLE_MODELS
+            if any(m == a or m.split(":")[0] == a.split(":")[0] for a in available)
+        ]
     except Exception as e:
         logger.warning(f"Impossible de récupérer les modèles Ollama: {e}")
         return settings.OLLAMA_AVAILABLE_MODELS
