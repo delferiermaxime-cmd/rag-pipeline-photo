@@ -116,6 +116,7 @@ async def chat_stream(
             min_score=message.min_score,
             context_max_chars=message.context_max_chars,
             system_prompt=message.system_prompt,
+            skip_rag=message.skip_rag,
         ):
             try:
                 data = json.loads(chunk.removeprefix("data: ").strip())
