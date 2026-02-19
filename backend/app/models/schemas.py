@@ -38,6 +38,7 @@ class ChatMessageRequest(BaseModel):
     max_tokens: Optional[int] = 1024
     min_score: Optional[float] = 0.3
     context_max_chars: Optional[int] = 12000
+    system_prompt: Optional[str] = None
 
 ChatMessage = ChatMessageRequest
 
