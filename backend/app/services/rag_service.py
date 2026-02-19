@@ -91,6 +91,7 @@ async def stream_rag_response(
     max_tokens: Optional[int] = 1024,
     min_score: Optional[float] = 0.3,
     context_max_chars: Optional[int] = 12000,
+    system_prompt: Optional[str] = None,
 ) -> AsyncGenerator[str, None]:
 
     # 1. Embedding de la question
@@ -141,7 +142,8 @@ async def stream_rag_response(
     prompt = _build_prompt(question, chunks, context_max_chars=context_max_chars if context_max_chars else 12000)
 
     # 6. Construire les messages
-    messages = [{"role": "system", "content": RAG_SYSTEM_PROMPT}]
+    effective_prompt = system_prompt if system_prompt and system_prompt.strip() else RAG_SYSTEM_PROMPT
+    messages = [{"role": "system", "content": effective_prompt}]
     if history:
         for msg in history[-10:]:
             messages.append({"role": msg["role"], "content": msg["content"]})
