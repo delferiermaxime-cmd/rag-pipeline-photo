@@ -31,13 +31,13 @@ services:
       OLLAMA_HOST: "0.0.0.0"
     # FIX GPU : décommenter ces lignes si tu veux utiliser ta RTX PRO 4000
     # (nécessite nvidia-container-toolkit installé sur le serveur)
-    # deploy:
-    #   resources:
-    #     reservations:
-    #       devices:
-    #         - driver: nvidia
-    #           count: all
-    #           capabilities: [gpu]
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
 
 
   # ── Ollama Init ─────────────────────────────────────────────────────────────
