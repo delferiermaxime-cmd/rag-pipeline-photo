@@ -128,18 +128,17 @@ async def stream_rag_response(
         for c in chunks
     ]
     yield _sse({"type": "sources", "sources": sources})
-
-    if not chunks:
-        yield _sse({"type": "token", "token": "Information non trouvée dans les documents fournis."})
-        yield _sse({"type": "done"})
-        return
+    # Même sans chunks, on appelle le LLM — il répond depuis ses connaissances générales
 
     # 4. Vérifier si le modèle supporte la vision
     supports_vision = await _model_supports_vision(model, http_client)
     logger.info(f"Modèle {model} vision: {supports_vision}")
 
     # 5. Construire le prompt texte
-    prompt = _build_prompt(question, chunks, context_max_chars=context_max_chars if context_max_chars else 12000)
+    if chunks:
+        prompt = _build_prompt(question, chunks, context_max_chars=context_max_chars if context_max_chars else 12000)
+    else:
+        prompt = question  # pas de contexte — le LLM répond depuis ses connaissances
 
     # 6. Construire les messages
     effective_prompt = system_prompt if system_prompt and system_prompt.strip() else RAG_SYSTEM_PROMPT
