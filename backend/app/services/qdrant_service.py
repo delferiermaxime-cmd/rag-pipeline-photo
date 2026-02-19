@@ -14,7 +14,7 @@ from app.config import settings
 logger = logging.getLogger(__name__)
 
 _client: Optional[AsyncQdrantClient] = None
-_collection_ready: bool = False  # FIX : flag pour éviter un appel réseau à chaque upload
+_collection_ready: bool = False
 
 
 def get_client() -> AsyncQdrantClient:
@@ -26,11 +26,8 @@ def get_client() -> AsyncQdrantClient:
 
 async def ensure_collection(dim: int = None) -> None:
     global _collection_ready
-
-    # FIX : si la collection a déjà été vérifiée dans cette session, on ne refait pas l'appel réseau
     if _collection_ready:
         return
-
     client = get_client()
     dim = dim or settings.EMBEDDING_DIM
     collections = await client.get_collections()
@@ -43,7 +40,6 @@ async def ensure_collection(dim: int = None) -> None:
         logger.info(f"Collection '{settings.QDRANT_COLLECTION}' créée (dim={dim})")
     else:
         logger.info(f"Collection '{settings.QDRANT_COLLECTION}' déjà existante (dim={dim})")
-
     _collection_ready = True
 
 
@@ -64,6 +60,7 @@ async def upsert_chunks(
                 "page": chunk.get("page", 1),
                 "content": chunk.get("content", ""),
                 "chunk_index": chunk.get("chunk_index", i),
+                "image_filenames": chunk.get("image_filenames", []),  # images de la page
             },
         )
         for i, (chunk, embedding) in enumerate(zip(chunks, embeddings))
@@ -102,6 +99,7 @@ async def search_chunks(
             "page": r.payload.get("page", 1),
             "content": r.payload.get("content", ""),
             "score": r.score,
+            "image_filenames": r.payload.get("image_filenames", []),
         }
         for r in results
     ]
