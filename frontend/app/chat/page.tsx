@@ -1,11 +1,12 @@
 'use client'
 import { useState, useEffect, useRef } from 'react'
 import { useRouter } from 'next/navigation'
-import { Send, Paperclip, X, Trash2, Plus, ChevronLeft } from 'lucide-react'
+import { Send, Paperclip, X, Trash2, Plus, ChevronLeft, Filter, FileText, CheckSquare, Square } from 'lucide-react'
 import Sidebar from '@/components/Sidebar'
 import {
   getMe, getModels, streamChat, listConversations, getConversation, deleteConversation,
-  type Source, type Conversation
+  listDocuments,
+  type Source, type Conversation, type Document,
 } from '@/lib/api'
 import styles from './chat.module.css'
 
@@ -45,6 +46,13 @@ export default function ChatPage() {
   const [showHistory, setShowHistory] = useState(false)
   const [inlineFile, setInlineFile] = useState<{ name: string; content: string } | null>(null)
   const [loadingFile, setLoadingFile] = useState(false)
+
+  // FIX : sélection de documents pour filtrer la recherche Qdrant
+  const [documents, setDocuments] = useState<Document[]>([])
+  const [selectedDocIds, setSelectedDocIds] = useState<Set<string>>(new Set())
+  const [showDocFilter, setShowDocFilter] = useState(false)
+  const [loadingDocs, setLoadingDocs] = useState(false)
+
   const bottomRef = useRef<HTMLDivElement>(null)
   const cancelRef = useRef<(() => void) | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -56,6 +64,7 @@ export default function ChatPage() {
       setModel(data.default || data.models[0])
     }).catch(() => {})
     loadConversations()
+    loadDocuments()
   }, [router])
 
   useEffect(() => {
@@ -67,6 +76,16 @@ export default function ChatPage() {
       const convs = await listConversations()
       setConversations(convs)
     } catch {}
+  }
+
+  async function loadDocuments() {
+    setLoadingDocs(true)
+    try {
+      const docs = await listDocuments()
+      // Garde uniquement les documents prêts (indexés dans Qdrant)
+      setDocuments(docs.filter((d: Document) => d.status === 'ready'))
+    } catch {}
+    finally { setLoadingDocs(false) }
   }
 
   async function loadConversation(id: string) {
@@ -101,10 +120,32 @@ export default function ChatPage() {
       const content = await parseFileLocally(file)
       setInlineFile({ name: file.name, content })
     } catch {
-      alert("Impossible de lire le fichier")
+      alert('Impossible de lire le fichier')
     } finally {
       setLoadingFile(false)
       e.target.value = ''
+    }
+  }
+
+  // Toggle sélection d'un document
+  function toggleDocSelection(docId: string) {
+    setSelectedDocIds(prev => {
+      const next = new Set(prev)
+      if (next.has(docId)) {
+        next.delete(docId)
+      } else {
+        next.add(docId)
+      }
+      return next
+    })
+  }
+
+  // Sélectionner / désélectionner tous
+  function toggleAllDocs() {
+    if (selectedDocIds.size === documents.length) {
+      setSelectedDocIds(new Set())
+    } else {
+      setSelectedDocIds(new Set(documents.map(d => d.id)))
     }
   }
 
@@ -122,6 +163,9 @@ export default function ChatPage() {
     const assistantMsg: Message = { role: 'assistant', content: '' }
     setMessages(prev => [...prev, userMsg, assistantMsg])
     setStreaming(true)
+
+    // FIX : passe les document_ids sélectionnés — si aucun sélectionné, null = cherche partout
+    const docIds = selectedDocIds.size > 0 ? Array.from(selectedDocIds) : undefined
 
     cancelRef.current = streamChat(
       fullQuestion,
@@ -161,6 +205,7 @@ export default function ChatPage() {
       (id) => setActiveConvId(id),
       activeConvId,
       settings,
+      docIds,
     )
   }
 
@@ -175,6 +220,7 @@ export default function ChatPage() {
     <div className={styles.layout}>
       <Sidebar username={user?.username} model={model} onModelChange={setModel} models={models} />
 
+      {/* ── Panneau historique ── */}
       {showHistory && (
         <div className={styles.historyPanel}>
           <div className={styles.historyHeader}>
@@ -204,14 +250,91 @@ export default function ChatPage() {
         </div>
       )}
 
+      {/* ── Panneau filtre documents ── */}
+      {showDocFilter && (
+        <div className={styles.docFilterPanel}>
+          <div className={styles.historyHeader}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <Filter size={14} />
+              <span>Filtrer par document</span>
+            </div>
+            <button onClick={() => setShowDocFilter(false)} className="ghost" style={{ padding: 4 }}>
+              <X size={16} />
+            </button>
+          </div>
+
+          {/* Sélectionner tout / aucun */}
+          <div className={styles.docFilterActions}>
+            <button className="ghost" onClick={toggleAllDocs} style={{ fontSize: 12, padding: '4px 10px' }}>
+              {selectedDocIds.size === documents.length && documents.length > 0 ? 'Tout désélectionner' : 'Tout sélectionner'}
+            </button>
+            {selectedDocIds.size > 0 && (
+              <span className={styles.docFilterCount}>
+                {selectedDocIds.size} / {documents.length}
+              </span>
+            )}
+          </div>
+
+          <div className={styles.docFilterInfo}>
+            {selectedDocIds.size === 0
+              ? '🌐 Recherche dans tous les documents'
+              : `🔍 Filtré sur ${selectedDocIds.size} document${selectedDocIds.size > 1 ? 's' : ''}`
+            }
+          </div>
+
+          <div className={styles.docList}>
+            {loadingDocs && <p className={styles.emptyHistory}>Chargement...</p>}
+            {!loadingDocs && documents.length === 0 && (
+              <p className={styles.emptyHistory}>Aucun document indexé</p>
+            )}
+            {documents.map(doc => {
+              const isSelected = selectedDocIds.has(doc.id)
+              return (
+                <div
+                  key={doc.id}
+                  className={`${styles.docItem} ${isSelected ? styles.docItemSelected : ''}`}
+                  onClick={() => toggleDocSelection(doc.id)}
+                >
+                  <div className={styles.docItemIcon}>
+                    {isSelected
+                      ? <CheckSquare size={15} style={{ color: 'var(--accent)' }} />
+                      : <Square size={15} style={{ color: 'var(--text-muted)' }} />
+                    }
+                  </div>
+                  <div className={styles.docItemInfo}>
+                    <span className={styles.docItemName}>{doc.original_name}</span>
+                    <span className={styles.docItemMeta}>
+                      {doc.file_type.toUpperCase()} · {doc.chunk_count} chunks
+                    </span>
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      )}
+
       <main className={styles.main}>
         <div className={styles.toolbar}>
-          <button className={`ghost ${styles.historyBtn}`} onClick={() => setShowHistory(!showHistory)}>
+          <button className={`ghost ${styles.historyBtn}`} onClick={() => { setShowHistory(!showHistory); setShowDocFilter(false) }}>
             <ChevronLeft size={16} style={{ transform: showHistory ? 'rotate(180deg)' : 'none', transition: '0.2s' }} />
             Historique
           </button>
           <button className="ghost" onClick={newConversation}>
             <Plus size={16} /> Nouvelle
+          </button>
+
+          {/* FIX : bouton filtre documents */}
+          <button
+            className={`ghost ${styles.filterBtn} ${selectedDocIds.size > 0 ? styles.filterBtnActive : ''}`}
+            onClick={() => { const opening = !showDocFilter; setShowDocFilter(opening); setShowHistory(false); if (opening) loadDocuments() }}
+            title="Filtrer par document"
+          >
+            <Filter size={16} />
+            {selectedDocIds.size > 0
+              ? `${selectedDocIds.size} doc${selectedDocIds.size > 1 ? 's' : ''}`
+              : 'Tous les docs'
+            }
           </button>
         </div>
 
@@ -222,6 +345,11 @@ export default function ChatPage() {
               <p style={{ fontSize: 13, opacity: 0.5, marginTop: 8 }}>
                 📎 pour joindre un fichier temporaire · 📁 Upload pour indexer dans la base
               </p>
+              {selectedDocIds.size > 0 && (
+                <p style={{ fontSize: 12, marginTop: 12, color: 'var(--accent)', opacity: 0.8 }}>
+                  🔍 Filtré sur {selectedDocIds.size} document{selectedDocIds.size > 1 ? 's' : ''}
+                </p>
+              )}
             </div>
           )}
 
@@ -302,7 +430,14 @@ export default function ChatPage() {
               {streaming ? <span className="spinner" style={{ width: 16, height: 16 }} /> : <Send size={16} />}
             </button>
           </div>
-          <p className={styles.hint}>Modèle: <strong>{model}</strong></p>
+          <p className={styles.hint}>
+            Modèle: <strong>{model}</strong>
+            {selectedDocIds.size > 0 && (
+              <span style={{ marginLeft: 12, color: 'var(--accent)' }}>
+                · 🔍 {selectedDocIds.size} doc{selectedDocIds.size > 1 ? 's' : ''} sélectionné{selectedDocIds.size > 1 ? 's' : ''}
+              </span>
+            )}
+          </p>
         </div>
       </main>
     </div>
