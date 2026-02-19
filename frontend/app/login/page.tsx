@@ -32,14 +32,18 @@ export default function LoginPage() {
         <h1 className={styles.title}>RAG Local</h1>
         <p className={styles.subtitle}>Connectez-vous à votre assistant</p>
 
-        <form onSubmit={handleSubmit} className={styles.form}>
+        <form onSubmit={handleSubmit} className={styles.form} noValidate>
           <div className={styles.field}>
-            <label>Nom d'utilisateur</label>
+            <label>Nom d&apos;utilisateur</label>
             <input
               type="text"
               value={username}
               onChange={e => setUsername(e.target.value)}
               placeholder="username"
+              autoComplete="username"
+              autoCorrect="off"
+              autoCapitalize="off"
+              spellCheck={false}
               required
               autoFocus
             />
@@ -51,6 +55,7 @@ export default function LoginPage() {
               value={password}
               onChange={e => setPassword(e.target.value)}
               placeholder="••••••••"
+              autoComplete="current-password"
               required
             />
           </div>
@@ -61,7 +66,7 @@ export default function LoginPage() {
         </form>
 
         <p className={styles.link}>
-          Pas de compte ? <a href="/register">S'inscrire</a>
+          Pas de compte ? <a href="/register">S&apos;inscrire</a>
         </p>
       </div>
     </div>
