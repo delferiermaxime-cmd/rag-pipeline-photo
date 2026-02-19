@@ -46,7 +46,7 @@ class Settings(BaseSettings):
     # RAG
     CHUNK_SIZE: int = 600
     CHUNK_OVERLAP: int = 50
-    TOP_K: int = 5
+    TOP_K: int = 8
 
     # CORS — FIX : validator robuste qui accepte les deux formats :
     #   - virgules  : http://localhost,http://localhost:8080
