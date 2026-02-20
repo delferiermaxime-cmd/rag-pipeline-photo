@@ -71,6 +71,7 @@ services:
     volumes:
       - uploads_tmp:/tmp/uploads
       - images_data:/app/images_storage
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --timeout-keep-alive 3600 --workers 1
     # ✅ GPU pour EasyOCR + TableFormer (Docling layout detection)
     deploy:
       resources:
