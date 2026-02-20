@@ -70,6 +70,8 @@ services:
       QDRANT_PORT: 6333
       OLLAMA_BASE_URL: http://ollama:11434
       DEBUG: "false"
+      CUDA_VISIBLE_DEVICES: ""
+      EASYOCR_MODULE_PATH: "/tmp/easyocr_disabled"
       # SECRET_KEY et CORS_ORIGINS viennent du env_file ci-dessus — ne pas les redéfinir ici
     volumes:
       - uploads_tmp:/tmp/uploads
