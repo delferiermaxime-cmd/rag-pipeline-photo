@@ -52,6 +52,7 @@ def _build_converter(ext: str) -> "DocumentConverter":
     opts.images_scale = 2.0
     opts.generate_page_images = True
     opts.generate_picture_images = True
+    # EasyOCR — modèles pré-téléchargés au build dans le Dockerfile
     if ext == ".pdf":
         return DocumentConverter(
             format_options={
