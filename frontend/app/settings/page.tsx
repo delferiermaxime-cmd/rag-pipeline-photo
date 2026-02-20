@@ -121,10 +121,10 @@ export default function SettingsPage() {
                 Contexte max (caractères) <span className={styles.value}>{s.contextMaxChars.toLocaleString()}</span>
               </label>
               <p className={styles.fieldDesc}>Taille maximale du contexte envoyé au LLM</p>
-              <input type="range" min={2000} max={32000} step={1000} value={s.contextMaxChars}
+              <input type="range" min={2000} max={64000} step={1000} value={s.contextMaxChars}
                 className={styles.range}
                 onChange={e => setS(prev => ({ ...prev, contextMaxChars: parseInt(e.target.value) }))} />
-              <div className={styles.rangeLabels}><span>2k</span><span>32k</span></div>
+              <div className={styles.rangeLabels}><span>2k</span><span>64k</span></div>
             </div>
           </div>
 
