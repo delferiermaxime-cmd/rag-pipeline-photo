@@ -160,12 +160,12 @@ docker compose ps
 
 Tous les containers doivent être en état `Up` :
 ```
-rag-pipeline-backend-1    Up
-rag-pipeline-frontend-1   Up
-rag-pipeline-nginx-1      Up
-rag-pipeline-ollama-1     Up
-rag-pipeline-postgres-1   Up
-rag-pipeline-qdrant-1     Up
+rag-pipeline-photo-backend-1    Up
+rag-pipeline-photo-frontend-1   Up
+rag-pipeline-nginx-photo-1      Up
+rag-pipeline-photo-ollama-1     Up
+rag-pipeline-photo-postgres-1   Up
+rag-pipeline-photo-qdrant-1     Up
 ```
 
 ### 6. Accéder à l'application
@@ -181,13 +181,13 @@ Ouvrir **http://votre-ip-serveur** dans le navigateur, créer un compte et comme
 | Variable | Description | Défaut |
 |---|---|---|
 | `SECRET_KEY` | Clé JWT — **obligatoire, changer en production** | — |
-| `CORS_ORIGINS` | Origines autorisées (séparées par virgule) | `http://localhost` |
+
 
 ### Modèles LLM disponibles (`docker-compose.yml`)
 
 Par défaut :
 ```yaml
-OLLAMA_AVAILABLE_MODELS: gemma3:4b,llama3.1:latest,deepseek-r1:14b,gemma3:12b,gemma3:27b
+OLLAMA_AVAILABLE_MODELS: gemma3:4b,deepseek-r1:14b,gemma3:12b,gemma3:27b
 ```
 
 Pour ajouter un modèle :
@@ -195,8 +195,8 @@ Pour ajouter un modèle :
 # 1. Télécharger le modèle
 docker compose exec ollama ollama pull llama3.2:latest
 
-# 2. L'ajouter dans docker-compose.yml
-OLLAMA_AVAILABLE_MODELS: gemma3:4b,llama3.1:latest,llama3.2:latest
+# 2. L'ajouter dans .env
+OLLAMA_AVAILABLE_MODELS=["gemma3:4b","gemma3:12b","gemma3:27b","deepseek-r1:14b"]
 
 # 3. Redémarrer le backend
 docker compose restart backend
@@ -224,7 +224,7 @@ Parcourir tous les modèles disponibles : **https://ollama.com/library**
 ### Mise à jour du code
 
 ```bash
-cd ~/rag-pipeline
+cd ~/rag-pipeline-photo
 
 # 1. Récupérer les dernières modifications
 git pull
