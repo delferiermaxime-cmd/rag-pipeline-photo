@@ -11,6 +11,9 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
+# Pré-télécharger les modèles EasyOCR au build
+RUN python -c "import easyocr; easyocr.Reader(['fr', 'en'], gpu=False)" || echo "EasyOCR preload skipped"
+
 # FIX preload Docling : on force le téléchargement des modèles ML au build
 # (layout detection, table structure, OCR) et pas au premier upload.
 # Sans ça, le premier upload sur un serveur frais prend 3-5 minutes
