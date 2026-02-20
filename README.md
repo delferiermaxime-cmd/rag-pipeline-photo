@@ -96,6 +96,19 @@ cp .env.example .env
 nano .env
 ```
 
+
+```bash
+cd frontend
+
+# Regénérer le package-lock.json
+npm install
+
+# Revenir à la racine et rebuilder
+cd ..
+```
+
+
+
 Contenu minimal du `.env` :
 ```env
 SECRET_KEY=changez-moi-avec-une-cle-tres-longue-et-aleatoire
