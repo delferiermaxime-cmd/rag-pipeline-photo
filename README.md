@@ -1,6 +1,17 @@
-# RAG Local 🔍
+# RAG Local 
 
 Application RAG (**Retrieval-Augmented Generation**) auto-hébergée permettant d'interroger vos documents via un LLM local. Aucune donnée ne quitte votre serveur.
+
+(**Liens vers les outils utilisés:**)
+
+      -https://qdrant.tech/demo/
+      -https://docs.ollama.com
+      -https://nginx.org
+      -https://fastapi.tiangolo.com
+      -https://www.docling.ai
+      -https://www.sqlalchemy.org
+      -https://www.postgresql.org/docs/9.3/index.html
+
 
 ---
 
@@ -47,7 +58,7 @@ Question → bge-m3 → Qdrant (similarité cosine) → TOP_K chunks → LLM →
 **Stack technique :**
 | Composant | Technologie |
 |---|---|
-| Frontend | Next.js 14, TypeScript |
+| Frontend | Next.js 15, TypeScript |
 | Backend | FastAPI, SQLAlchemy async |
 | Base vectorielle | Qdrant |
 | Base de données | PostgreSQL 16 |
