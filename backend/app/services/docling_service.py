@@ -56,8 +56,7 @@ def _build_converter(ext: str) -> "DocumentConverter":
     opts.images_scale = 2.0
     opts.generate_page_images = True
     opts.generate_picture_images = True
-    # ✅ GPU accessible via docker-compose → EasyOCR + TableFormer à pleine qualité
-    # Pas d'AcceleratorOptions CPU, pas de TesseractCliOcrOptions
+    # GPU accessible via docker-compose → EasyOCR + TableFormer à pleine qualité
     if ext == ".pdf":
         return DocumentConverter(
             format_options={
@@ -68,6 +67,27 @@ def _build_converter(ext: str) -> "DocumentConverter":
             }
         )
     return DocumentConverter()
+
+def _clean_markdown(markdown: str) -> str:
+    """
+    Supprime les éléments parasites du markdown généré par Docling :
+    - Balises <!-- image --> insérées par Docling pour les images non extraites
+    - Footers de page : ©, "Page X sur Y", dates, URLs isolées
+    - Lignes vides multiples
+    """
+    # Supprimer les balises <!-- image -->
+    markdown = re.sub(r'<!--\s*image\s*-->', '', markdown, flags=re.IGNORECASE)
+    # Supprimer les lignes copyright (©...)
+    markdown = re.sub(r'^\s*©.*$', '', markdown, flags=re.MULTILINE)
+    # Supprimer "Page X sur Y" (avec variantes majuscules/minuscules)
+    markdown = re.sub(r'(?i)page\s+\d+\s+sur\s+\d+', '', markdown)
+    # Supprimer les URLs seules sur une ligne
+    markdown = re.sub(r'^\s*https?://\S+\s*$', '', markdown, flags=re.MULTILINE)
+    # Supprimer les dates/heures seules sur une ligne (ex: "16/02/2026 14:17")
+    markdown = re.sub(r'^\s*\d{1,2}/\d{1,2}/\d{4}\s+\d{2}:\d{2}\s*$', '', markdown, flags=re.MULTILINE)
+    # Nettoyer les lignes vides multiples (max 2 de suite)
+    markdown = re.sub(r'\n{3,}', '\n\n', markdown)
+    return markdown.strip()
 
 def _chunk_markdown(
     markdown: str,
@@ -171,6 +191,8 @@ def _convert_sync(
     markdown: str = result.document.export_to_markdown()
     if not markdown or not markdown.strip():
         return [{"page": 1, "title": filename, "content": "(document vide)", "chunk_index": 0}], []
+    # ✅ Nettoyage des parasites avant le chunking
+    markdown = _clean_markdown(markdown)
     chunks = _chunk_markdown(markdown, filename)
     images = _save_images_sync(result, document_id)
     return chunks, images
