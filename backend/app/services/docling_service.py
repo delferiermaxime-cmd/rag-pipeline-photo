@@ -22,7 +22,7 @@ IMAGES_DIR = "/app/images_storage"
 try:
     from docling.document_converter import DocumentConverter, PdfFormatOption
     from docling.datamodel.base_models import InputFormat
-    from docling.datamodel.pipeline_options import PdfPipelineOptions, TesseractCliOcrOptions
+    from docling.datamodel.pipeline_options import PdfPipelineOptions
     from docling.datamodel.accelerator_options import AcceleratorOptions, AcceleratorDevice
     from docling.backend.pypdfium2_backend import PyPdfiumDocumentBackend
     _DOCLING_OK = True
@@ -62,9 +62,9 @@ def _build_converter(ext: str) -> "DocumentConverter":
     opts.images_scale = 2.0
     opts.generate_page_images = True
     opts.generate_picture_images = True
-    # Force Tesseract — pas EasyOCR
-    opts.ocr_options = TesseractCliOcrOptions(lang=["fra", "eng"])
-    # Force CPU via API officielle Docling — évite le crash meta tensor
+    # ✅ EasyOCR restauré (meilleure détection de structure/titres → meilleur chunking)
+    # PAS de TesseractCliOcrOptions — on garde le moteur par défaut de Docling
+    # ✅ Force CPU via API officielle Docling — évite le crash meta tensor
     opts.accelerator_options = AcceleratorOptions(
         num_threads=4,
         device=AcceleratorDevice.CPU
