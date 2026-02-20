@@ -4,14 +4,20 @@ import logging
 import os
 import re
 import tempfile
+import threading
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
+
+# CRITIQUE : forcer CPU avant tout import PyTorch/Docling
+# Sans ça, PyTorch tente de charger les modèles sur GPU (meta device) → crash
+os.environ.setdefault("CUDA_VISIBLE_DEVICES", "")
+os.environ.setdefault("EASYOCR_MODULE_PATH", "/tmp/easyocr_disabled")
+
 logger = logging.getLogger(__name__)
 
-# Lock threading pour sérialiser les conversions Docling
-# (PyTorch/EasyOCR ne sont pas thread-safe en parallèle)
-import threading
+# Lock pour sérialiser les conversions (sécurité supplémentaire)
 _DOCLING_LOCK = threading.Lock()
+
 
 IMAGES_DIR = "/app/images_storage"
 try:
