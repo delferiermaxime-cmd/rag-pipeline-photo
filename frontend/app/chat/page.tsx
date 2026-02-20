@@ -1,7 +1,7 @@
 'use client'
 import { useState, useEffect, useRef } from 'react'
 import { useRouter } from 'next/navigation'
-import { Send, Paperclip, X, Trash2, Plus, ChevronLeft, Filter, CheckSquare, Square, ChevronDown, ChevronUp } from 'lucide-react'
+import { Send, Paperclip, X, Trash2, Plus, ChevronLeft, Filter, CheckSquare, Square, ChevronDown, ChevronUp, Search } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import Sidebar from '@/components/Sidebar'
@@ -55,6 +55,7 @@ export default function ChatPage() {
   const [showDocFilter, setShowDocFilter] = useState(false)
   const [loadingDocs, setLoadingDocs] = useState(false)
   const [skipRag, setSkipRag] = useState(false)
+  const [docSearch, setDocSearch] = useState('')
 
   const bottomRef = useRef<HTMLDivElement>(null)
   const cancelRef = useRef<(() => void) | null>(null)
@@ -259,10 +260,24 @@ export default function ChatPage() {
               : `🔍 Filtré sur ${selectedDocIds.size} document${selectedDocIds.size > 1 ? 's' : ''}`}
           </div>
 
+          {/* Barre de recherche */}
+          {documents.length > 0 && (
+            <div style={{ position: 'relative', padding: '6px 10px', borderBottom: '1px solid var(--border)', opacity: skipRag ? 0.4 : 1, pointerEvents: skipRag ? 'none' : 'auto' }}>
+              <Search size={12} style={{ position: 'absolute', left: 18, top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)', pointerEvents: 'none' }} />
+              <input
+                type="text"
+                placeholder="Rechercher…"
+                value={docSearch}
+                onChange={e => setDocSearch(e.target.value)}
+                style={{ width: '100%', paddingLeft: 26, paddingRight: 8, height: 28, fontSize: 12, background: 'var(--bg-3)', border: '1px solid var(--border)', borderRadius: 6, color: 'var(--text)', boxSizing: 'border-box' }}
+              />
+            </div>
+          )}
+
           <div className={styles.docList} style={{ opacity: skipRag ? 0.4 : 1, pointerEvents: skipRag ? 'none' : 'auto' }}>
             {loadingDocs && <p className={styles.emptyHistory}>Chargement...</p>}
             {!loadingDocs && documents.length === 0 && <p className={styles.emptyHistory}>Aucun document indexé</p>}
-            {documents.map(doc => {
+            {documents.filter(doc => doc.original_name.toLowerCase().includes(docSearch.toLowerCase())).map(doc => {
               const isSelected = selectedDocIds.has(doc.id)
               return (
                 <div key={doc.id} className={`${styles.docItem} ${isSelected ? styles.docItemSelected : ''}`} onClick={() => toggleDocSelection(doc.id)}>
