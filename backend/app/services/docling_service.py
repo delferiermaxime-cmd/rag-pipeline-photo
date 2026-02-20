@@ -11,7 +11,7 @@ IMAGES_DIR = "/app/images_storage"
 try:
     from docling.document_converter import DocumentConverter, PdfFormatOption
     from docling.datamodel.base_models import InputFormat
-    from docling.datamodel.pipeline_options import PdfPipelineOptions
+    from docling.datamodel.pipeline_options import PdfPipelineOptions, TesseractCliOcrOptions
     from docling.backend.pypdfium2_backend import PyPdfiumDocumentBackend
     _DOCLING_OK = True
     logger.info("Docling chargé avec succès")
@@ -52,7 +52,11 @@ def _build_converter(ext: str) -> "DocumentConverter":
     opts.images_scale = 2.0
     opts.generate_page_images = True
     opts.generate_picture_images = True
-    # EasyOCR — modèles pré-téléchargés au build dans le Dockerfile
+    # Tesseract — installé dans le container, pas de téléchargement réseau
+    try:
+        opts.ocr_options = TesseractCliOcrOptions(lang=["fra", "eng"])
+    except Exception:
+        pass
     if ext == ".pdf":
         return DocumentConverter(
             format_options={
