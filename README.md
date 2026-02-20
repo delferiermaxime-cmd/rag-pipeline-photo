@@ -496,6 +496,37 @@ Si version incorrecte → vérifier `backend/requirements.txt` : `bcrypt==4.0.1`
 
 ---
 
+---
+
+### ❌ `nvidia-smi` — Driver/library version mismatch
+
+**Cause :** Le driver Nvidia du kernel et la librairie NVML sont désynchronisés — 
+généralement après une mise à jour du driver sans reboot.
+
+**Symptôme :**
+```
+Failed to initialize NVML: Driver/library version mismatch
+NVML library version: 580.126
+```
+
+**Fix :**
+```bash
+sudo reboot
+```
+
+Après le reboot :
+```bash
+nvidia-smi                          # doit afficher la carte correctement
+docker compose restart ollama
+docker compose exec ollama ollama ps  # vérifier 100% GPU
+```
+
+> ⚠️ Le reboot est obligatoire — le mismatch vient d'une mise à jour du kernel 
+> sans redémarrage, laissant l'ancien driver en mémoire et la nouvelle librairie sur le disque.
+
+
+---
+
 ### 🔄 Réinitialisation complète (données effacées)
 
 > ⚠️ **Destructif** — supprime tous les utilisateurs, documents et vecteurs.
