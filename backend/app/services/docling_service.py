@@ -8,11 +8,6 @@ import threading
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-# CRITIQUE : forcer CPU AVANT tout import PyTorch/Docling
-# os.environ[] (pas setdefault) pour écraser toute valeur existante
-os.environ["CUDA_VISIBLE_DEVICES"] = ""
-os.environ["EASYOCR_MODULE_PATH"] = "/tmp/easyocr_disabled"
-
 logger = logging.getLogger(__name__)
 
 # Lock pour sérialiser les conversions Docling (PyTorch non thread-safe)
@@ -23,7 +18,6 @@ try:
     from docling.document_converter import DocumentConverter, PdfFormatOption
     from docling.datamodel.base_models import InputFormat
     from docling.datamodel.pipeline_options import PdfPipelineOptions
-    from docling.datamodel.accelerator_options import AcceleratorOptions, AcceleratorDevice
     from docling.backend.pypdfium2_backend import PyPdfiumDocumentBackend
     _DOCLING_OK = True
     logger.info("Docling chargé avec succès")
@@ -62,13 +56,8 @@ def _build_converter(ext: str) -> "DocumentConverter":
     opts.images_scale = 2.0
     opts.generate_page_images = True
     opts.generate_picture_images = True
-    # ✅ EasyOCR restauré (meilleure détection de structure/titres → meilleur chunking)
-    # PAS de TesseractCliOcrOptions — on garde le moteur par défaut de Docling
-    # ✅ Force CPU via API officielle Docling — évite le crash meta tensor
-    opts.accelerator_options = AcceleratorOptions(
-        num_threads=4,
-        device=AcceleratorDevice.CPU
-    )
+    # ✅ GPU accessible via docker-compose → EasyOCR + TableFormer à pleine qualité
+    # Pas d'AcceleratorOptions CPU, pas de TesseractCliOcrOptions
     if ext == ".pdf":
         return DocumentConverter(
             format_options={
@@ -176,6 +165,7 @@ def _convert_sync(
     filename: str,
     document_id: str,
 ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+    """Retourne (chunks, images)"""
     converter = _build_converter(ext)
     result = converter.convert(tmp_path)
     markdown: str = result.document.export_to_markdown()
@@ -221,6 +211,11 @@ async def convert_document(
     filename: str,
     document_id: str = "",
 ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+    """
+    Retourne (chunks, images).
+    FIX .dotx/.doc : on renomme le fichier temporaire en .docx avant de le passer à Docling
+    car Docling valide l'extension du fichier temporaire.
+    """
     ext = Path(filename).suffix.lower()
     tmp_ext = ext
     if ext in DOCX_ALIASES:
@@ -234,6 +229,7 @@ async def convert_document(
             with tempfile.NamedTemporaryFile(suffix=tmp_ext, delete=False, dir="/tmp") as tmp:
                 tmp.write(file_bytes)
                 tmp_path = tmp.name
+            # ✅ Lock pour sérialiser les uploads simultanés (PyTorch non thread-safe)
             def _run_locked():
                 with _DOCLING_LOCK:
                     return _convert_sync(tmp_path, tmp_ext, filename, document_id)
