@@ -8,17 +8,11 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 logger = logging.getLogger(__name__)
 
-# Semaphore : limite à 1 conversion Docling simultanée
-# Docling/PyTorch n'est pas thread-safe — plusieurs conversions parallèles
-# causent "Cannot copy out of meta tensor" (conflit de device CPU/meta)
-# Semaphore initialisé à la demande dans le bon event loop
-_DOCLING_SEMAPHORE = None
+# Lock threading pour sérialiser les conversions Docling
+# (PyTorch/EasyOCR ne sont pas thread-safe en parallèle)
+import threading
+_DOCLING_LOCK = threading.Lock()
 
-def _get_semaphore():
-    global _DOCLING_SEMAPHORE
-    if _DOCLING_SEMAPHORE is None:
-        _DOCLING_SEMAPHORE = asyncio.Semaphore(1)
-    return _DOCLING_SEMAPHORE
 IMAGES_DIR = "/app/images_storage"
 try:
     from docling.document_converter import DocumentConverter, PdfFormatOption
@@ -57,18 +51,6 @@ else:
 def _ensure_images_dir() -> None:
     os.makedirs(IMAGES_DIR, exist_ok=True)
 
-# Sémaphore : limite à 1 conversion Docling simultanée
-# Evite les crashes PyTorch quand plusieurs uploads sont lancés en parallèle
-_docling_semaphore = None
-
-def _get_semaphore():
-    global _docling_semaphore
-    if _docling_semaphore is None:
-        import asyncio
-        _docling_semaphore = asyncio.Semaphore(1)
-    return _docling_semaphore
-
-
 def _build_converter(ext: str) -> "DocumentConverter":
     opts = PdfPipelineOptions()
     opts.do_ocr = True
@@ -76,7 +58,7 @@ def _build_converter(ext: str) -> "DocumentConverter":
     opts.images_scale = 2.0
     opts.generate_page_images = True
     opts.generate_picture_images = True
-    # Force Tesseract — évite EasyOCR qui crash sans GPU dans le container
+    # Force Tesseract (pas EasyOCR) pour éviter téléchargement réseau
     try:
         opts.ocr_options = TesseractCliOcrOptions(lang=["fra", "eng"])
     except Exception as e:
@@ -257,10 +239,13 @@ async def convert_document(
             with tempfile.NamedTemporaryFile(suffix=tmp_ext, delete=False, dir="/tmp") as tmp:
                 tmp.write(file_bytes)
                 tmp_path = tmp.name
-            # Sémaphore : 1 seule conversion Docling à la fois (évite crash PyTorch concurrent)
-            async with _get_semaphore():
-                logger.info(f"[Docling] Semaphore acquis pour '{filename}'")
-                chunks, images = await asyncio.to_thread(_convert_sync, tmp_path, tmp_ext, filename, document_id)
+            # On passe l'ext originale pour le _build_converter mais tmp_path a la bonne extension
+            # Lock : une conversion à la fois (PyTorch non thread-safe)
+            def _convert_locked():
+                with _DOCLING_LOCK:
+                    logger.info(f"[Docling] Lock acquis pour '{filename}'")
+                    return _convert_sync(tmp_path, tmp_ext, filename, document_id)
+            chunks, images = await asyncio.to_thread(_convert_locked)
             logger.info(f"[Docling] {len(chunks)} chunks, {len(images)} images pour '{filename}'")
             return chunks, images
         except Exception as e:
