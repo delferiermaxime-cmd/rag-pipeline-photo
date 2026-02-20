@@ -10,7 +10,6 @@ services:
       POSTGRES_PASSWORD: ragpassword
     volumes:
       - postgres_data:/var/lib/postgresql/data
- 
 
 
   # ── Qdrant ─────────────────────────────────────────────────────────────────
@@ -29,8 +28,6 @@ services:
       - ollama_data:/root/.ollama
     environment:
       OLLAMA_HOST: "0.0.0.0"
-    # FIX GPU : décommenter ces lignes si tu veux utiliser ta RTX PRO 4000
-    # (nécessite nvidia-container-toolkit installé sur le serveur)
     deploy:
       resources:
         reservations:
@@ -43,7 +40,7 @@ services:
   # ── Ollama Init ─────────────────────────────────────────────────────────────
   ollama-init:
     image: curlimages/curl:latest
-    restart: on-failure   # FIX : était "no" → si Ollama pas encore prêt, Docker relance automatiquement
+    restart: on-failure
     depends_on:
       - ollama
     volumes:
@@ -58,24 +55,30 @@ services:
       dockerfile: Dockerfile
     restart: unless-stopped
     env_file:
-      - .env   # FIX : charge SECRET_KEY et CORS_ORIGINS depuis ton fichier .env
+      - .env
     depends_on:
       - postgres
       - qdrant
       - ollama
     environment:
-      # Ces variables sont définies ici en dur (pas sensibles)
       DATABASE_URL: postgresql+asyncpg://raguser:ragpassword@postgres:5432/ragdb
       QDRANT_HOST: qdrant
       QDRANT_PORT: 6333
       OLLAMA_BASE_URL: http://ollama:11434
       DEBUG: "false"
-      CUDA_VISIBLE_DEVICES: ""
-      EASYOCR_MODULE_PATH: "/tmp/easyocr_disabled"
-      # SECRET_KEY et CORS_ORIGINS viennent du env_file ci-dessus — ne pas les redéfinir ici
+      # GPU activé pour le backend → EasyOCR + TableFormer à pleine qualité
+      # CUDA_VISIBLE_DEVICES et EASYOCR_MODULE_PATH supprimés intentionnellement
     volumes:
       - uploads_tmp:/tmp/uploads
       - images_data:/app/images_storage
+    # ✅ GPU pour EasyOCR + TableFormer (Docling layout detection)
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
 
 
   # ── Frontend ────────────────────────────────────────────────────────────────
@@ -87,8 +90,7 @@ services:
     depends_on:
       - backend
     environment:
-      NEXT_PUBLIC_API_URL: ""   # Vide = le browser passe par Nginx pour joindre le backend
-
+      NEXT_PUBLIC_API_URL: ""
 
 
   # ── Nginx ───────────────────────────────────────────────────────────────────
@@ -96,7 +98,7 @@ services:
     image: nginx:alpine
     restart: unless-stopped
     ports:
-      - "80:80"   # Seul port exposé — tout le trafic passe par Nginx
+      - "80:80"
     depends_on:
       - backend
       - frontend
