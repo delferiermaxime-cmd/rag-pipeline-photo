@@ -8,22 +8,22 @@ import threading
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-# CRITIQUE : forcer CPU avant tout import PyTorch/Docling
-# Sans ça, PyTorch tente de charger les modèles sur GPU (meta device) → crash
-os.environ.setdefault("CUDA_VISIBLE_DEVICES", "")
-os.environ.setdefault("EASYOCR_MODULE_PATH", "/tmp/easyocr_disabled")
+# CRITIQUE : forcer CPU AVANT tout import PyTorch/Docling
+# os.environ[] (pas setdefault) pour écraser toute valeur existante
+os.environ["CUDA_VISIBLE_DEVICES"] = ""
+os.environ["EASYOCR_MODULE_PATH"] = "/tmp/easyocr_disabled"
 
 logger = logging.getLogger(__name__)
 
-# Lock pour sérialiser les conversions (sécurité supplémentaire)
+# Lock pour sérialiser les conversions Docling (PyTorch non thread-safe)
 _DOCLING_LOCK = threading.Lock()
-
 
 IMAGES_DIR = "/app/images_storage"
 try:
     from docling.document_converter import DocumentConverter, PdfFormatOption
     from docling.datamodel.base_models import InputFormat
     from docling.datamodel.pipeline_options import PdfPipelineOptions, TesseractCliOcrOptions
+    from docling.datamodel.accelerator_options import AcceleratorOptions, AcceleratorDevice
     from docling.backend.pypdfium2_backend import PyPdfiumDocumentBackend
     _DOCLING_OK = True
     logger.info("Docling chargé avec succès")
@@ -32,8 +32,6 @@ except Exception as e:
     logger.error(f"Docling import échoué: {e}")
 
 EXT_TO_FORMAT: Dict[str, Any] = {}
-# Extensions qui doivent être converties en .docx avant passage à Docling
-# car Docling valide l'extension du fichier temporaire
 DOCX_ALIASES = {".dotx", ".doc", ".odt"}
 
 if _DOCLING_OK:
@@ -64,11 +62,13 @@ def _build_converter(ext: str) -> "DocumentConverter":
     opts.images_scale = 2.0
     opts.generate_page_images = True
     opts.generate_picture_images = True
-    # Force Tesseract (pas EasyOCR) pour éviter téléchargement réseau
-    try:
-        opts.ocr_options = TesseractCliOcrOptions(lang=["fra", "eng"])
-    except Exception as e:
-        logger.warning(f"TesseractCliOcrOptions non disponible: {e}")
+    # Force Tesseract — pas EasyOCR
+    opts.ocr_options = TesseractCliOcrOptions(lang=["fra", "eng"])
+    # Force CPU via API officielle Docling — évite le crash meta tensor
+    opts.accelerator_options = AcceleratorOptions(
+        num_threads=4,
+        device=AcceleratorDevice.CPU
+    )
     if ext == ".pdf":
         return DocumentConverter(
             format_options={
@@ -143,10 +143,7 @@ def _chunk_markdown(
                 _add_chunk(title, buf.strip(), page)
     return chunks or [{"page": 1, "title": filename, "content": "(vide)", "chunk_index": 0}]
 
-def _save_images_sync(
-    result: Any,
-    document_id: str,
-) -> List[Dict[str, Any]]:
+def _save_images_sync(result: Any, document_id: str) -> List[Dict[str, Any]]:
     _ensure_images_dir()
     saved: List[Dict[str, Any]] = []
     try:
@@ -179,7 +176,6 @@ def _convert_sync(
     filename: str,
     document_id: str,
 ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
-    """Retourne (chunks, images)"""
     converter = _build_converter(ext)
     result = converter.convert(tmp_path)
     markdown: str = result.document.export_to_markdown()
@@ -225,14 +221,7 @@ async def convert_document(
     filename: str,
     document_id: str = "",
 ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
-    """
-    Retourne (chunks, images).
-    FIX .dotx/.doc : on renomme le fichier temporaire en .docx avant de le passer à Docling
-    car Docling valide l'extension du fichier temporaire.
-    """
     ext = Path(filename).suffix.lower()
-
-    # Détermine l'extension réelle à utiliser pour le fichier temporaire
     tmp_ext = ext
     if ext in DOCX_ALIASES:
         tmp_ext = ".docx"
@@ -245,13 +234,10 @@ async def convert_document(
             with tempfile.NamedTemporaryFile(suffix=tmp_ext, delete=False, dir="/tmp") as tmp:
                 tmp.write(file_bytes)
                 tmp_path = tmp.name
-            # On passe l'ext originale pour le _build_converter mais tmp_path a la bonne extension
-            # Lock : une conversion à la fois (PyTorch non thread-safe)
-            def _convert_locked():
+            def _run_locked():
                 with _DOCLING_LOCK:
-                    logger.info(f"[Docling] Lock acquis pour '{filename}'")
                     return _convert_sync(tmp_path, tmp_ext, filename, document_id)
-            chunks, images = await asyncio.to_thread(_convert_locked)
+            chunks, images = await asyncio.to_thread(_run_locked)
             logger.info(f"[Docling] {len(chunks)} chunks, {len(images)} images pour '{filename}'")
             return chunks, images
         except Exception as e:
